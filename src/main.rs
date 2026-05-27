@@ -1,4 +1,6 @@
 use std::io::{self, Write};
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use rustyline::{Editor, Helper, Hinter, Highlighter, Validator, Context, Config, CompletionType, error::ReadlineError};
@@ -35,25 +37,27 @@ fn builtin_commands() -> Vec<&'static str> {
     vec!["exit", "echo", "type", "pwd", "cd"]
 }
 
-fn get_command_path(command: &str) -> Option<String> {
-    if let Ok(paths) = std::env::var("PATH") {
-        for path in paths.split(':') {
-            let full_path = format!("{}/{}", path, command);
-            if let Ok(metadata) = std::fs::metadata(&full_path) {
-                if metadata.permissions().mode() & 0o111 != 0 {
-                    return Some(full_path);
-                }
-            }
+fn build_executables() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let paths = std::env::var("PATH").unwrap_or_default();
+    for dir in paths.split(':') {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.permissions().mode() & 0o111 == 0 { continue; }
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else { continue };
+            map.entry(name.to_string()).or_insert_with(|| format!("{}/{}", dir, name));
         }
     }
-    None
+    map
 }
 
-fn get_command_type(command: &str) -> CommandKind {
+fn get_command_type(command: &str, executables: &OnceLock<HashMap<String, String>>) -> CommandKind {
     if builtin_commands().contains(&command) {
         CommandKind::Builtin
-    } else if let Some(path) = get_command_path(command) {
-        CommandKind::External(path)
+    } else if let Some(path) = executables.get_or_init(build_executables).get(command) {
+        CommandKind::External(path.clone())
     } else {
         CommandKind::NotFound
     }
@@ -125,10 +129,10 @@ fn parse_redirects(all_args: Vec<String>) -> (Vec<String>, Vec<Redirect>) {
     (args, redirects)
 }
 
-fn parse_command(input: &str) -> Command {
+fn parse_command(input: &str, executables: &OnceLock<HashMap<String, String>>) -> Command {
     let all_args = parse_args(input);
     let name = all_args.get(0).cloned().unwrap_or_default();
-    let command_type = get_command_type(&name);
+    let command_type = get_command_type(&name, executables);
     let (args, redirects) = parse_redirects(all_args);
     Command { name, args, redirects, command_type }
 }
@@ -148,7 +152,7 @@ fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
     result
 }
 
-fn execute(command: Command, stdout_file: Option<std::fs::File>, stderr_file: Option<std::fs::File>) -> bool {
+fn execute(command: Command, stdout_file: Option<std::fs::File>, stderr_file: Option<std::fs::File>, executables: &OnceLock<HashMap<String, String>>) -> bool {
     let Command { name, args, command_type, .. } = command;
     match command_type {
         CommandKind::Builtin => {
@@ -161,11 +165,11 @@ fn execute(command: Command, stdout_file: Option<std::fs::File>, stderr_file: Op
                 None => Box::new(io::stderr()),
             };
             match name.as_str() {
-                "exit" => return true, // That signals the main loop to exit
+                "exit" => return true,
                 "echo" => writeln!(out, "{}", args.join(" ")).unwrap(),
                 "type" => {
                     for arg in &args {
-                        match get_command_type(arg) {
+                        match get_command_type(arg, executables) {
                             CommandKind::Builtin => writeln!(out, "{} is a shell builtin", arg).unwrap(),
                             CommandKind::External(path) => writeln!(out, "{} is {}", arg, path).unwrap(),
                             CommandKind::NotFound => writeln!(err, "{}: not found", arg).unwrap(),
@@ -215,7 +219,22 @@ fn execute(command: Command, stdout_file: Option<std::fs::File>, stderr_file: Op
 }
 
 #[derive(Helper, Hinter, Highlighter, Validator)]
-struct ShellHelper;
+struct ShellHelper {
+    executables: Arc<OnceLock<HashMap<String, String>>>,
+}
+
+impl ShellHelper {
+    fn new() -> Self {
+        let executables = Arc::new(OnceLock::new());
+        let bg = Arc::clone(&executables);
+        std::thread::spawn(move || { bg.get_or_init(build_executables); });
+        Self { executables }
+    }
+
+    fn executables(&self) -> &HashMap<String, String> {
+        self.executables.get_or_init(build_executables)
+    }
+}
 
 impl Completer for ShellHelper {
     type Candidate = Pair;
@@ -225,11 +244,18 @@ impl Completer for ShellHelper {
         if word.contains(' ') {
             return Ok((pos, vec![]));
         }
-        let candidates = builtin_commands()
+        let mut candidates: Vec<Pair> = builtin_commands()
             .iter()
             .filter(|cmd| cmd.starts_with(word))
             .map(|cmd| Pair { display: cmd.to_string(), replacement: format!("{} ", cmd) })
+            .chain(
+                self.executables().keys()
+                    .filter(|name| name.starts_with(word))
+                    .map(|name| Pair { display: name.to_string(), replacement: format!("{} ", name) })
+            )
             .collect();
+        candidates.sort_by(|a, b| a.display.cmp(&b.display));
+        candidates.dedup_by(|a, b| a.display == b.display);
         Ok((0, candidates))
     }
 }
@@ -237,7 +263,7 @@ impl Completer for ShellHelper {
 fn main() {
     let config = Config::builder().completion_type(CompletionType::List).build();
     let mut editor: Editor<ShellHelper, DefaultHistory> = Editor::with_config(config).expect("Failed to create line editor");
-    editor.set_helper(Some(ShellHelper));
+    editor.set_helper(Some(ShellHelper::new()));
     loop {
         let input = match editor.readline("$ ") {
             Ok(line) => { editor.add_history_entry(&line).ok(); line }
@@ -245,7 +271,8 @@ fn main() {
             Err(e) => { eprintln!("shell: {}", e); break; }
         };
 
-        let command = parse_command(&input);
+        let executables = &*editor.helper().unwrap().executables;
+        let command = parse_command(&input, executables);
         if command.name.is_empty() {
             continue;
         }
@@ -253,7 +280,7 @@ fn main() {
         let stdout_file = resolve_fd(&command.redirects, Fd::Stdout);
         let stderr_file = resolve_fd(&command.redirects, Fd::Stderr);
 
-        if execute(command, stdout_file, stderr_file) {
+        if execute(command, stdout_file, stderr_file, executables) {
             break;
         }
     }
