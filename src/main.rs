@@ -16,7 +16,10 @@ fn main() {
         io::stdin().read_line(&mut input).expect("Failed to read line");
         input = input.trim().to_string();
 
-        // Throw an invalid command error
-        invalid_command_error(&input);
+        // Route the command
+        match input.as_str() {
+            "exit" => break,
+            _ => invalid_command_error(&input),
+        }
     }
 }
