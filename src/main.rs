@@ -5,7 +5,7 @@ use std::os::unix::process::CommandExt;
 
 
 fn builtin_commands() -> Vec<&'static str> {
-    vec!["exit", "echo", "type", "pwd", "cd", "ls"]
+    vec!["exit", "echo", "type", "pwd", "cd"]
 }
 
 fn get_command_path(command: &str) -> Option<String> {
@@ -183,18 +183,6 @@ fn main() {
                         if let Err(_) = std::env::set_current_dir(path) {
                             eprintln!("cd: {}: No such file or directory", path);
                         }
-                    }
-                }
-                "ls" => {
-                    if let Ok(entries) = std::fs::read_dir(".") {
-                        for entry in entries {
-                            if let Ok(entry) = entry {
-                                write!(out, "{}  ", entry.file_name().to_string_lossy()).unwrap();
-                            }
-                        }
-                        writeln!(out).unwrap();
-                    } else {
-                        eprintln!("ls: error reading current directory");
                     }
                 }
                 _ => eprintln!("panic: unknown builtin command '{}'", command_name),
