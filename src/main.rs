@@ -43,7 +43,7 @@ fn main() {
             "type" => {
                 for arg in &args {
                     if builtin_commands().contains(arg) {
-                        println!("{} is a built-in command", arg);
+                        println!("{} is a shell builtin", arg);
                     } else if let Some(path) = get_command_path(arg) {
                         println!("{} is {}", arg, path);
                     } else {
