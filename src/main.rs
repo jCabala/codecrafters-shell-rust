@@ -21,6 +21,22 @@ fn get_command_path(command: &str) -> Option<String> {
     None
 }
 
+#[derive(Debug, PartialEq)]
+enum TypeResult {
+    Builtin,
+    External(String),
+    NotFound,
+}
+fn get_command_type(command: &str) -> TypeResult {
+    if builtin_commands().contains(&command) {
+        TypeResult::Builtin
+    } else if let Some(path) = get_command_path(command) {
+        TypeResult::External(path)
+    } else {
+        TypeResult::NotFound
+    }
+}
+
 fn main() {
     loop {
         print!("$ ");
@@ -35,23 +51,30 @@ fn main() {
         let mut parts = input.split_whitespace();
         let command = parts.next().unwrap_or("");
         let args: Vec<&str> = parts.collect();
+        let command_type = get_command_type(command);
 
-        // Route the command
-        match command {
-            "exit" => break,
-            "echo" => println!("{}", args.join(" ")),
-            "type" => {
-                for arg in &args {
-                    if builtin_commands().contains(arg) {
-                        println!("{} is a shell builtin", arg);
-                    } else if let Some(path) = get_command_path(arg) {
-                        println!("{} is {}", arg, path);
-                    } else {
-                        println!("{} not found", arg);
+        if command_type == TypeResult::Builtin {
+            // Handle builtin commands
+            match command {
+                "exit" => break,
+                "echo" => println!("{}", args.join(" ")),
+                "type" => {
+                    for arg in &args {
+                        match get_command_type(arg) {
+                            TypeResult::Builtin => println!("{} is a shell builtin", arg),
+                            TypeResult::External(path) => println!("{} is {}", arg, path),
+                            TypeResult::NotFound => eprintln!("{}: not found", arg),
+                        }
                     }
                 }
+                _ => eprintln!("panic: unknown builtin command '{}'", command),
             }
-            _ => eprintln!("{}: command not found", command),
+        } else if let TypeResult::External(path) = command_type {
+            // Command adds the path to the arguments
+            let _ = std::process::Command::new(path).args(&args).status();
+        } else {
+            eprintln!("{}: command not found", command);
         }
+
     }
 }
