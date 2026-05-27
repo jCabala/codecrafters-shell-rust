@@ -38,6 +38,31 @@ fn get_command_type(command: &str) -> TypeResult {
     }
 }
 
+fn parse_args(input: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !in_single_quote => in_single_quote = true,
+            '\'' if in_single_quote => in_single_quote = false,
+            ' ' | '\t' if !in_single_quote => {
+                if !current.is_empty() {
+                    args.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
+}
+
 fn main() {
     loop {
         print!("$ ");
@@ -46,17 +71,16 @@ fn main() {
         // Read user input
         let mut input = String::new();
         io::stdin().read_line(&mut input).expect("Failed to read line");
-        input = input.trim().to_string();
+        let input = input.trim_end_matches('\n').trim_end_matches('\r').to_string();
 
-        // Split command into name and arguments
-        let mut parts = input.split_whitespace();
-        let command = parts.next().unwrap_or("");
-        
+        let parts = parse_args(&input);
+        let command = parts.first().map(|s| s.as_str()).unwrap_or("");
+
         if command.is_empty() {
-            continue; // Skip empty input
+            continue;
         }
-        
-        let args: Vec<&str> = parts.collect();
+
+        let args: Vec<&str> = parts[1..].iter().map(|s| s.as_str()).collect();
         let command_type = get_command_type(command);
 
         if command_type == TypeResult::Builtin {
