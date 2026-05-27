@@ -21,14 +21,6 @@ fn get_command_path(command: &str) -> Option<String> {
     None
 }
 
-fn has_executable_permission(path: &str) -> bool {
-    if let Ok(metadata) = std::fs::metadata(path) {
-        let permissions = metadata.permissions();
-        return permissions.mode() & 0o111 != 0;
-    }
-    false
-}
-
 fn main() {
     loop {
         print!("$ ");
@@ -53,11 +45,7 @@ fn main() {
                     if builtin_commands().contains(arg) {
                         println!("{} is a built-in command", arg);
                     } else if let Some(path) = get_command_path(arg) {
-                        if has_executable_permission(&path) {
-                            println!("{} is an executable file at {}", arg, path);
-                        } else {
-                            println!("{} is a file at {} but not executable", arg, path);
-                        }
+                        println!("{} is {}", arg, path);
                     } else {
                         println!("{} not found", arg);
                     }
