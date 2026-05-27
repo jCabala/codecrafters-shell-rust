@@ -97,9 +97,12 @@ fn parse_redirects(all_args: Vec<String>) -> (Vec<String>, Vec<Redirect>) {
     let mut iter = all_args.into_iter().skip(1);
     while let Some(arg) = iter.next() {
         if arg == ">" || arg == "1>" {
-            // Treat 1> and > as the same
             if let Some(target) = iter.next() {
                 redirects.push(Redirect { operator: '>', target });
+            }
+        } else if arg == "2>" {
+            if let Some(target) = iter.next() {
+                redirects.push(Redirect { operator: '2', target });
             }
         } else {
             args.push(arg);
@@ -117,10 +120,10 @@ fn parse_command(input: &str) -> Command {
     Command { name, args, redirects, command_type }
 }
 
-fn resolve_stdout(redirects: &[Redirect]) -> Option<std::fs::File> {
+fn resolve_redirect(redirects: &[Redirect], op: char) -> Option<std::fs::File> {
     let mut result = None;
     for redirect in redirects {
-        if redirect.operator == '>' {
+        if redirect.operator == op {
             match std::fs::File::create(&redirect.target) {
                 Ok(file) => result = Some(file),
                 Err(e) => eprintln!("shell: {}: {}", redirect.target, e),
@@ -145,12 +148,17 @@ fn main() {
             continue;
         }
 
-        let stdout_file = resolve_stdout(&redirects);
+        let stdout_file = resolve_redirect(&redirects, '>');
+        let stderr_file = resolve_redirect(&redirects, '2');
 
         if command_type == TypeResult::Builtin {
             let mut out: Box<dyn Write> = match stdout_file {
                 Some(f) => Box::new(f),
                 None => Box::new(io::stdout()),
+            };
+            let mut err: Box<dyn Write> = match stderr_file {
+                Some(f) => Box::new(f),
+                None => Box::new(io::stderr()),
             };
             match command_name.as_str() {
                 "exit" => break,
@@ -160,7 +168,7 @@ fn main() {
                         match get_command_type(arg) {
                             TypeResult::Builtin => writeln!(out, "{} is a shell builtin", arg).unwrap(),
                             TypeResult::External(path) => writeln!(out, "{} is {}", arg, path).unwrap(),
-                            TypeResult::NotFound => eprintln!("{}: not found", arg),
+                            TypeResult::NotFound => writeln!(err, "{}: not found", arg).unwrap(),
                         }
                     }
                 }
@@ -168,30 +176,33 @@ fn main() {
                     if let Ok(path) = std::env::current_dir() {
                         writeln!(out, "{}", path.display()).unwrap();
                     } else {
-                        eprintln!("pwd: error getting current directory");
+                        writeln!(err, "pwd: error getting current directory").unwrap();
                     }
                 }
                 "cd" => {
                     if args.is_empty() || args[0] == "~" {
                         if let Ok(path) = std::env::var("HOME") {
                             if let Err(_) = std::env::set_current_dir(&path) {
-                                eprintln!("cd: {}: No such file or directory", path);
+                                writeln!(err, "cd: {}: No such file or directory", path).unwrap();
                             }
                         }
                     } else {
                         let path = &args[0];
                         if let Err(_) = std::env::set_current_dir(path) {
-                            eprintln!("cd: {}: No such file or directory", path);
+                            writeln!(err, "cd: {}: No such file or directory", path).unwrap();
                         }
                     }
                 }
-                _ => eprintln!("panic: unknown builtin command '{}'", command_name),
+                _ => writeln!(err, "panic: unknown builtin command '{}'", command_name).unwrap(),
             }
         } else if let TypeResult::External(path) = command_type {
             let mut cmd = std::process::Command::new(&path);
             cmd.arg0(&command_name).args(&args);
             if let Some(file) = stdout_file {
                 cmd.stdout(std::process::Stdio::from(file));
+            }
+            if let Some(file) = stderr_file {
+                cmd.stderr(std::process::Stdio::from(file));
             }
             let _ = cmd.status();
         } else {
