@@ -2,8 +2,8 @@
 use std::io::{self, Write};
 
 
-fn invalid_command_error(command: &str) {
-    eprintln!("{command}: command not found");
+fn known_commands() -> Vec<&'static str> {
+    vec!["exit", "echo", "type"]
 }
 
 fn main() {
@@ -25,7 +25,18 @@ fn main() {
         match command {
             "exit" => break,
             "echo" => println!("{}", args.join(" ")),
-            _ => invalid_command_error(command),
+            "type" => {
+                if args.is_empty() {
+                    eprintln!("type: missing operand");
+                } else if known_commands().contains(&args[0]) {
+                    for arg in args {
+                        println!("{} is a shell builtin", arg);
+                    }
+                } else {
+                    eprintln!("{}: not found", args[0]);
+                }
+            }
+            _ => eprintln!("{}: command not found", command),
         }
     }
 }
