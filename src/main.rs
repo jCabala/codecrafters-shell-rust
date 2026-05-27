@@ -1,8 +1,35 @@
-#[allow(unused_imports)]
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
+use rustyline::{Editor, Helper, Hinter, Highlighter, Validator, Context, Config, CompletionType, error::ReadlineError};
+use rustyline::completion::{Completer, Pair};
+use rustyline::history::DefaultHistory;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum CommandKind {
+    Builtin,
+    External(String),
+    NotFound,
+}
+
+#[derive(PartialEq)]
+enum Fd { Stdout, Stderr }
+
+#[derive(PartialEq)]
+enum WriteMode { Overwrite, Append }
+
+struct Redirect {
+    fd: Fd,
+    mode: WriteMode,
+    target: String,
+}
+
+struct Command {
+    name: String,
+    args: Vec<String>,
+    redirects: Vec<Redirect>,
+    command_type: CommandKind,
+}
 
 fn builtin_commands() -> Vec<&'static str> {
     vec!["exit", "echo", "type", "pwd", "cd"]
@@ -22,39 +49,14 @@ fn get_command_path(command: &str) -> Option<String> {
     None
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-enum TypeResult {
-    Builtin,
-    External(String),
-    NotFound,
-}
-fn get_command_type(command: &str) -> TypeResult {
+fn get_command_type(command: &str) -> CommandKind {
     if builtin_commands().contains(&command) {
-        TypeResult::Builtin
+        CommandKind::Builtin
     } else if let Some(path) = get_command_path(command) {
-        TypeResult::External(path)
+        CommandKind::External(path)
     } else {
-        TypeResult::NotFound
+        CommandKind::NotFound
     }
-}
-
-#[derive(PartialEq)]
-enum Fd { Stdout, Stderr }
-
-#[derive(PartialEq)]
-enum WriteMode { Overwrite, Append }
-
-struct Redirect {
-    fd: Fd,
-    mode: WriteMode,
-    target: String,
-}
-
-struct Command {
-    name: String,
-    args: Vec<String>,
-    redirects: Vec<Redirect>,
-    command_type: TypeResult,
 }
 
 fn parse_args(input: &str) -> Vec<String> {
@@ -97,27 +99,24 @@ fn parse_args(input: &str) -> Vec<String> {
     args
 }
 
+fn parse_redirect_op(s: &str) -> Option<(Fd, WriteMode)> {
+    match s {
+        ">" | "1>"   => Some((Fd::Stdout, WriteMode::Overwrite)),
+        "2>"         => Some((Fd::Stderr, WriteMode::Overwrite)),
+        ">>" | "1>>" => Some((Fd::Stdout, WriteMode::Append)),
+        "2>>"        => Some((Fd::Stderr, WriteMode::Append)),
+        _            => None,
+    }
+}
+
 fn parse_redirects(all_args: Vec<String>) -> (Vec<String>, Vec<Redirect>) {
-    // Split args and redirects
     let mut args = Vec::new();
     let mut redirects = Vec::new();
     let mut iter = all_args.into_iter().skip(1);
     while let Some(arg) = iter.next() {
-        if arg == ">" || arg == "1>" {
+        if let Some((fd, mode)) = parse_redirect_op(&arg) {
             if let Some(target) = iter.next() {
-                redirects.push(Redirect { fd: Fd::Stdout, mode: WriteMode::Overwrite, target });
-            }
-        } else if arg == "2>" {
-            if let Some(target) = iter.next() {
-                redirects.push(Redirect { fd: Fd::Stderr, mode: WriteMode::Overwrite, target });
-            }
-        } else if arg == ">>" || arg == "1>>" {
-            if let Some(target) = iter.next() {
-                redirects.push(Redirect { fd: Fd::Stdout, mode: WriteMode::Append, target });
-            }
-        } else if arg == "2>>" {
-            if let Some(target) = iter.next() {
-                redirects.push(Redirect { fd: Fd::Stderr, mode: WriteMode::Append, target });
+                redirects.push(Redirect { fd, mode, target });
             }
         } else {
             args.push(arg);
@@ -130,7 +129,6 @@ fn parse_command(input: &str) -> Command {
     let all_args = parse_args(input);
     let name = all_args.get(0).cloned().unwrap_or_default();
     let command_type = get_command_type(&name);
-    
     let (args, redirects) = parse_redirects(all_args);
     Command { name, args, redirects, command_type }
 }
@@ -150,33 +148,10 @@ fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
     result
 }
 
-fn resolve_stdout(redirects: &[Redirect]) -> Option<std::fs::File> {
-    resolve_fd(redirects, Fd::Stdout)
-}
-
-fn resolve_stderr(redirects: &[Redirect]) -> Option<std::fs::File> {
-    resolve_fd(redirects, Fd::Stderr)
-}
-
-fn main() {
-    loop {
-        print!("$ ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).expect("Failed to read line");
-        let input = input.trim_end_matches('\n').trim_end_matches('\r').to_string();
-
-        let Command { name: command_name, args, redirects, command_type } = parse_command(&input);
-
-        if command_name.is_empty() {
-            continue;
-        }
-
-        let stdout_file = resolve_stdout(&redirects);
-        let stderr_file = resolve_stderr(&redirects);
-
-        if command_type == TypeResult::Builtin {
+fn execute(command: Command, stdout_file: Option<std::fs::File>, stderr_file: Option<std::fs::File>) -> bool {
+    let Command { name, args, command_type, .. } = command;
+    match command_type {
+        CommandKind::Builtin => {
             let mut out: Box<dyn Write> = match stdout_file {
                 Some(f) => Box::new(f),
                 None => Box::new(io::stdout()),
@@ -185,15 +160,15 @@ fn main() {
                 Some(f) => Box::new(f),
                 None => Box::new(io::stderr()),
             };
-            match command_name.as_str() {
-                "exit" => break,
+            match name.as_str() {
+                "exit" => return true, // That signals the main loop to exit
                 "echo" => writeln!(out, "{}", args.join(" ")).unwrap(),
                 "type" => {
                     for arg in &args {
                         match get_command_type(arg) {
-                            TypeResult::Builtin => writeln!(out, "{} is a shell builtin", arg).unwrap(),
-                            TypeResult::External(path) => writeln!(out, "{} is {}", arg, path).unwrap(),
-                            TypeResult::NotFound => writeln!(err, "{}: not found", arg).unwrap(),
+                            CommandKind::Builtin => writeln!(out, "{} is a shell builtin", arg).unwrap(),
+                            CommandKind::External(path) => writeln!(out, "{} is {}", arg, path).unwrap(),
+                            CommandKind::NotFound => writeln!(err, "{}: not found", arg).unwrap(),
                         }
                     }
                 }
@@ -218,11 +193,12 @@ fn main() {
                         }
                     }
                 }
-                _ => writeln!(err, "panic: unknown builtin command '{}'", command_name).unwrap(),
+                _ => writeln!(err, "panic: unknown builtin command '{}'", name).unwrap(),
             }
-        } else if let TypeResult::External(path) = command_type {
+        }
+        CommandKind::External(path) => {
             let mut cmd = std::process::Command::new(&path);
-            cmd.arg0(&command_name).args(&args);
+            cmd.arg0(&name).args(&args);
             if let Some(file) = stdout_file {
                 cmd.stdout(std::process::Stdio::from(file));
             }
@@ -230,8 +206,55 @@ fn main() {
                 cmd.stderr(std::process::Stdio::from(file));
             }
             let _ = cmd.status();
-        } else {
-            eprintln!("{}: command not found", command_name);
+        }
+        CommandKind::NotFound => {
+            eprintln!("{}: command not found", name);
+        }
+    }
+    false
+}
+
+#[derive(Helper, Hinter, Highlighter, Validator)]
+struct ShellHelper;
+
+impl Completer for ShellHelper {
+    type Candidate = Pair;
+
+    fn complete(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> rustyline::Result<(usize, Vec<Pair>)> {
+        let word = &line[..pos];
+        if word.contains(' ') {
+            return Ok((pos, vec![]));
+        }
+        let candidates = builtin_commands()
+            .iter()
+            .filter(|cmd| cmd.starts_with(word))
+            .map(|cmd| Pair { display: cmd.to_string(), replacement: cmd.to_string() })
+            .collect();
+        Ok((0, candidates))
+    }
+}
+
+fn main() {
+    let config = Config::builder().completion_type(CompletionType::List).build();
+    let mut editor: Editor<ShellHelper, DefaultHistory> = Editor::with_config(config).expect("Failed to create line editor");
+    editor.set_helper(Some(ShellHelper));
+    loop {
+        let input = match editor.readline("$ ") {
+            Ok(line) => { editor.add_history_entry(&line).ok(); line }
+            Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
+            Err(e) => { eprintln!("shell: {}", e); break; }
+        };
+
+        let command = parse_command(&input);
+        if command.name.is_empty() {
+            continue;
+        }
+
+        let stdout_file = resolve_fd(&command.redirects, Fd::Stdout);
+        let stderr_file = resolve_fd(&command.redirects, Fd::Stderr);
+
+        if execute(command, stdout_file, stderr_file) {
+            break;
         }
     }
 }
