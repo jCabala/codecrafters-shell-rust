@@ -1,9 +1,30 @@
 #[allow(unused_imports)]
 use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
 
 
-fn known_commands() -> Vec<&'static str> {
+fn builtin_commands() -> Vec<&'static str> {
     vec!["exit", "echo", "type"]
+}
+
+fn get_command_path(command: &str) -> Option<String> {
+    if let Ok(paths) = std::env::var("PATH") {
+        for path in paths.split(':') {
+            let full_path = format!("{}/{}", path, command);
+            if std::fs::metadata(&full_path).is_ok() {
+                return Some(full_path);
+            }
+        }
+    }
+    None
+}
+
+fn has_executable_permission(path: &str) -> bool {
+    if let Ok(metadata) = std::fs::metadata(path) {
+        let permissions = metadata.permissions();
+        return permissions.mode() & 0o111 != 0;
+    }
+    false
 }
 
 fn main() {
@@ -28,10 +49,12 @@ fn main() {
             "type" => {
                 if args.is_empty() {
                     eprintln!("type: missing operand");
-                } else if known_commands().contains(&args[0]) {
+                } else if builtin_commands().contains(&args[0]) {
                     for arg in args {
                         println!("{} is a shell builtin", arg);
                     }
+                } else if let Some(path) = get_command_path(&args[0]) && has_executable_permission(&path) {
+                    eprintln!("{} is {}", args[0], path);
                 } else {
                     eprintln!("{}: not found", args[0]);
                 }
