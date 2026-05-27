@@ -11,8 +11,10 @@ fn get_command_path(command: &str) -> Option<String> {
     if let Ok(paths) = std::env::var("PATH") {
         for path in paths.split(':') {
             let full_path = format!("{}/{}", path, command);
-            if std::fs::metadata(&full_path).is_ok() {
-                return Some(full_path);
+            if let Ok(metadata) = std::fs::metadata(&full_path) {
+                if metadata.permissions().mode() & 0o111 != 0 {
+                    return Some(full_path);
+                }
             }
         }
     }
@@ -47,16 +49,18 @@ fn main() {
             "exit" => break,
             "echo" => println!("{}", args.join(" ")),
             "type" => {
-                if args.is_empty() {
-                    eprintln!("type: missing operand");
-                } else if builtin_commands().contains(&args[0]) {
-                    for arg in args {
-                        println!("{} is a shell builtin", arg);
+                for arg in &args {
+                    if builtin_commands().contains(arg) {
+                        println!("{} is a built-in command", arg);
+                    } else if let Some(path) = get_command_path(arg) {
+                        if has_executable_permission(&path) {
+                            println!("{} is an executable file at {}", arg, path);
+                        } else {
+                            println!("{} is a file at {} but not executable", arg, path);
+                        }
+                    } else {
+                        println!("{} not found", arg);
                     }
-                } else if let Some(path) = get_command_path(&args[0]) && has_executable_permission(&path) {
-                    eprintln!("{} is {}", args[0], path);
-                } else {
-                    eprintln!("{}: not found", args[0]);
                 }
             }
             _ => eprintln!("{}: command not found", command),
