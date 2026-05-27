@@ -47,6 +47,11 @@ fn parse_args(input: &str) -> Vec<String> {
 
     while let Some(c) = chars.next() {
         match c {
+            '\\' if !in_single_quote && !in_double_quote => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
             '\'' if !in_single_quote && !in_double_quote => in_single_quote = true,
             '\'' if in_single_quote => in_single_quote = false,
             '"' if !in_single_quote && !in_double_quote => in_double_quote = true,
@@ -87,7 +92,6 @@ fn main() {
         let command_type = get_command_type(command);
 
         if command_type == TypeResult::Builtin {
-            // Handle builtin commands
             match command {
                 "exit" => break,
                 "echo" => println!("{}", args.join(" ")),
@@ -122,7 +126,6 @@ fn main() {
                     }
                 }
                 "ls" => {
-                    // Just list files in current directory
                     if let Ok(entries) = std::fs::read_dir(".") {
                         for entry in entries {
                             if let Ok(entry) = entry {
@@ -137,6 +140,7 @@ fn main() {
                 _ => eprintln!("panic: unknown builtin command '{}'", command),
             }
         } else if let TypeResult::External(path) = command_type {
+
             let _ = std::process::Command::new(&path).arg0(command).args(&args).status();
         } else {
             eprintln!("{}: command not found", command);
