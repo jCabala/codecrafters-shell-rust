@@ -5,7 +5,7 @@ use std::os::unix::process::CommandExt;
 
 
 fn builtin_commands() -> Vec<&'static str> {
-    vec!["exit", "echo", "type"]
+    vec!["exit", "echo", "type", "pwd"]
 }
 
 fn get_command_path(command: &str) -> Option<String> {
@@ -66,6 +66,13 @@ fn main() {
                             TypeResult::External(path) => println!("{} is {}", arg, path),
                             TypeResult::NotFound => eprintln!("{}: not found", arg),
                         }
+                    }
+                }
+                "pwd" => {
+                    if let Ok(path) = std::env::current_dir() {
+                        println!("{}", path.display());
+                    } else {
+                        eprintln!("pwd: error getting current directory");
                     }
                 }
                 _ => eprintln!("panic: unknown builtin command '{}'", command),
