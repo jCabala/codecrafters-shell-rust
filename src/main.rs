@@ -78,13 +78,13 @@ fn main() {
                 "cd" => {
                     if args.is_empty() {
                         if let Ok(path) = std::env::var("HOME") {
-                            if let Err(e) = std::env::set_current_dir(&path) {
+                            if let Err(_) = std::env::set_current_dir(&path) {
                                 eprintln!("cd: {}: No such file or directory", path);
                             }
                         }
                     } else {
                         let path = args[0];
-                        if let Err(e) = std::env::set_current_dir(path) {
+                        if let Err(_) = std::env::set_current_dir(path) {
                             eprintln!("cd: {}: No such file or directory", path);
                         }
                     }
