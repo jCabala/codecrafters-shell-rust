@@ -38,8 +38,15 @@ fn get_command_type(command: &str) -> TypeResult {
     }
 }
 
+#[derive(PartialEq)]
+enum Fd { Stdout, Stderr }
+
+#[derive(PartialEq)]
+enum WriteMode { Overwrite, Append }
+
 struct Redirect {
-    operator: char,
+    fd: Fd,
+    mode: WriteMode,
     target: String,
 }
 
@@ -98,11 +105,19 @@ fn parse_redirects(all_args: Vec<String>) -> (Vec<String>, Vec<Redirect>) {
     while let Some(arg) = iter.next() {
         if arg == ">" || arg == "1>" {
             if let Some(target) = iter.next() {
-                redirects.push(Redirect { operator: '>', target });
+                redirects.push(Redirect { fd: Fd::Stdout, mode: WriteMode::Overwrite, target });
             }
         } else if arg == "2>" {
             if let Some(target) = iter.next() {
-                redirects.push(Redirect { operator: '2', target });
+                redirects.push(Redirect { fd: Fd::Stderr, mode: WriteMode::Overwrite, target });
+            }
+        } else if arg == ">>" || arg == "1>>" {
+            if let Some(target) = iter.next() {
+                redirects.push(Redirect { fd: Fd::Stdout, mode: WriteMode::Append, target });
+            }
+        } else if arg == "2>>" {
+            if let Some(target) = iter.next() {
+                redirects.push(Redirect { fd: Fd::Stderr, mode: WriteMode::Append, target });
             }
         } else {
             args.push(arg);
@@ -120,17 +135,27 @@ fn parse_command(input: &str) -> Command {
     Command { name, args, redirects, command_type }
 }
 
-fn resolve_redirect(redirects: &[Redirect], op: char) -> Option<std::fs::File> {
+fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
     let mut result = None;
     for redirect in redirects {
-        if redirect.operator == op {
-            match std::fs::File::create(&redirect.target) {
-                Ok(file) => result = Some(file),
-                Err(e) => eprintln!("shell: {}: {}", redirect.target, e),
-            }
+        if redirect.fd == fd {
+            let append = redirect.mode == WriteMode::Append;
+            result = std::fs::OpenOptions::new()
+                .write(true).create(true).append(append).truncate(!append)
+                .open(&redirect.target)
+                .map_err(|e| eprintln!("shell: {}: {}", redirect.target, e))
+                .ok();
         }
     }
     result
+}
+
+fn resolve_stdout(redirects: &[Redirect]) -> Option<std::fs::File> {
+    resolve_fd(redirects, Fd::Stdout)
+}
+
+fn resolve_stderr(redirects: &[Redirect]) -> Option<std::fs::File> {
+    resolve_fd(redirects, Fd::Stderr)
 }
 
 fn main() {
@@ -148,8 +173,8 @@ fn main() {
             continue;
         }
 
-        let stdout_file = resolve_redirect(&redirects, '>');
-        let stderr_file = resolve_redirect(&redirects, '2');
+        let stdout_file = resolve_stdout(&redirects);
+        let stderr_file = resolve_stderr(&redirects);
 
         if command_type == TypeResult::Builtin {
             let mut out: Box<dyn Write> = match stdout_file {
