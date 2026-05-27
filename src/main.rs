@@ -38,6 +38,18 @@ fn get_command_type(command: &str) -> TypeResult {
     }
 }
 
+struct Redirect {
+    operator: char,
+    target: String,
+}
+
+struct Command {
+    name: String,
+    args: Vec<String>,
+    redirects: Vec<Redirect>,
+    command_type: TypeResult,
+}
+
 fn parse_args(input: &str) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();
@@ -78,42 +90,83 @@ fn parse_args(input: &str) -> Vec<String> {
     args
 }
 
+fn parse_redirects(all_args: Vec<String>) -> (Vec<String>, Vec<Redirect>) {
+    // Split args and redirects
+    let mut args = Vec::new();
+    let mut redirects = Vec::new();
+    let mut iter = all_args.into_iter().skip(1);
+    while let Some(arg) = iter.next() {
+        if arg == ">" || arg == "1>" {
+            // Treat 1> and > as the same
+            if let Some(target) = iter.next() {
+                redirects.push(Redirect { operator: '>', target });
+            }
+        } else {
+            args.push(arg);
+        }
+    }
+    (args, redirects)
+}
+
+fn parse_command(input: &str) -> Command {
+    let all_args = parse_args(input);
+    let name = all_args.get(0).cloned().unwrap_or_default();
+    let command_type = get_command_type(&name);
+    
+    let (args, redirects) = parse_redirects(all_args);
+    Command { name, args, redirects, command_type }
+}
+
+fn resolve_stdout(redirects: &[Redirect]) -> Option<std::fs::File> {
+    let mut result = None;
+    for redirect in redirects {
+        if redirect.operator == '>' {
+            match std::fs::File::create(&redirect.target) {
+                Ok(file) => result = Some(file),
+                Err(e) => eprintln!("shell: {}: {}", redirect.target, e),
+            }
+        }
+    }
+    result
+}
+
 fn main() {
     loop {
         print!("$ ");
         io::stdout().flush().unwrap();
 
-        // Read user input
         let mut input = String::new();
         io::stdin().read_line(&mut input).expect("Failed to read line");
         let input = input.trim_end_matches('\n').trim_end_matches('\r').to_string();
 
-        let parts = parse_args(&input);
-        let command = parts.first().map(|s| s.as_str()).unwrap_or("");
+        let Command { name: command_name, args, redirects, command_type } = parse_command(&input);
 
-        if command.is_empty() {
+        if command_name.is_empty() {
             continue;
         }
 
-        let args: Vec<&str> = parts[1..].iter().map(|s| s.as_str()).collect();
-        let command_type = get_command_type(command);
+        let stdout_file = resolve_stdout(&redirects);
 
         if command_type == TypeResult::Builtin {
-            match command {
+            let mut out: Box<dyn Write> = match stdout_file {
+                Some(f) => Box::new(f),
+                None => Box::new(io::stdout()),
+            };
+            match command_name.as_str() {
                 "exit" => break,
-                "echo" => println!("{}", args.join(" ")),
+                "echo" => writeln!(out, "{}", args.join(" ")).unwrap(),
                 "type" => {
                     for arg in &args {
                         match get_command_type(arg) {
-                            TypeResult::Builtin => println!("{} is a shell builtin", arg),
-                            TypeResult::External(path) => println!("{} is {}", arg, path),
+                            TypeResult::Builtin => writeln!(out, "{} is a shell builtin", arg).unwrap(),
+                            TypeResult::External(path) => writeln!(out, "{} is {}", arg, path).unwrap(),
                             TypeResult::NotFound => eprintln!("{}: not found", arg),
                         }
                     }
                 }
                 "pwd" => {
                     if let Ok(path) = std::env::current_dir() {
-                        println!("{}", path.display());
+                        writeln!(out, "{}", path.display()).unwrap();
                     } else {
                         eprintln!("pwd: error getting current directory");
                     }
@@ -125,8 +178,8 @@ fn main() {
                                 eprintln!("cd: {}: No such file or directory", path);
                             }
                         }
-                    }  else {
-                        let path = args[0];
+                    } else {
+                        let path = &args[0];
                         if let Err(_) = std::env::set_current_dir(path) {
                             eprintln!("cd: {}: No such file or directory", path);
                         }
@@ -136,22 +189,25 @@ fn main() {
                     if let Ok(entries) = std::fs::read_dir(".") {
                         for entry in entries {
                             if let Ok(entry) = entry {
-                                print!("{}  ", entry.file_name().to_string_lossy());
+                                write!(out, "{}  ", entry.file_name().to_string_lossy()).unwrap();
                             }
                         }
-                        println!();
+                        writeln!(out).unwrap();
                     } else {
                         eprintln!("ls: error reading current directory");
                     }
                 }
-                _ => eprintln!("panic: unknown builtin command '{}'", command),
+                _ => eprintln!("panic: unknown builtin command '{}'", command_name),
             }
         } else if let TypeResult::External(path) = command_type {
-
-            let _ = std::process::Command::new(&path).arg0(command).args(&args).status();
+            let mut cmd = std::process::Command::new(&path);
+            cmd.arg0(&command_name).args(&args);
+            if let Some(file) = stdout_file {
+                cmd.stdout(std::process::Stdio::from(file));
+            }
+            let _ = cmd.status();
         } else {
-            eprintln!("{}: command not found", command);
+            eprintln!("{}: command not found", command_name);
         }
-
     }
 }
