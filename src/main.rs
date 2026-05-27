@@ -52,6 +52,13 @@ fn parse_args(input: &str) -> Vec<String> {
                     current.push(next);
                 }
             }
+            '\\' if in_double_quote => {
+                match chars.next() {
+                    Some(next @ '"') | Some(next @ '\\') => current.push(next),
+                    Some(next) => { current.push('\\'); current.push(next); }
+                    None => current.push('\\'),
+                }
+            }
             '\'' if !in_single_quote && !in_double_quote => in_single_quote = true,
             '\'' if in_single_quote => in_single_quote = false,
             '"' if !in_single_quote && !in_double_quote => in_double_quote = true,
