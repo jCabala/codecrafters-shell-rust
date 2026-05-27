@@ -228,7 +228,7 @@ impl Completer for ShellHelper {
         let candidates = builtin_commands()
             .iter()
             .filter(|cmd| cmd.starts_with(word))
-            .map(|cmd| Pair { display: cmd.to_string(), replacement: cmd.to_string() })
+            .map(|cmd| Pair { display: cmd.to_string(), replacement: format!("{} ", cmd) })
             .collect();
         Ok((0, candidates))
     }
