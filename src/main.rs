@@ -5,7 +5,7 @@ use std::os::unix::process::CommandExt;
 
 
 fn builtin_commands() -> Vec<&'static str> {
-    vec!["exit", "echo", "type", "pwd", "cd"]
+    vec!["exit", "echo", "type", "pwd", "cd", "ls"]
 }
 
 fn get_command_path(command: &str) -> Option<String> {
@@ -22,7 +22,7 @@ fn get_command_path(command: &str) -> Option<String> {
     None
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum TypeResult {
     Builtin,
     External(String),
@@ -51,6 +51,11 @@ fn main() {
         // Split command into name and arguments
         let mut parts = input.split_whitespace();
         let command = parts.next().unwrap_or("");
+        
+        if command.is_empty() {
+            continue; // Skip empty input
+        }
+        
         let args: Vec<&str> = parts.collect();
         let command_type = get_command_type(command);
 
@@ -87,6 +92,19 @@ fn main() {
                         if let Err(_) = std::env::set_current_dir(path) {
                             eprintln!("cd: {}: No such file or directory", path);
                         }
+                    }
+                }
+                "ls" => {
+                    // Just list files in current directory
+                    if let Ok(entries) = std::fs::read_dir(".") {
+                        for entry in entries {
+                            if let Ok(entry) = entry {
+                                print!("{}  ", entry.file_name().to_string_lossy());
+                            }
+                        }
+                        println!();
+                    } else {
+                        eprintln!("ls: error reading current directory");
                     }
                 }
                 _ => eprintln!("panic: unknown builtin command '{}'", command),
