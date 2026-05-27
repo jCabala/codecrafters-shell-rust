@@ -16,10 +16,16 @@ fn main() {
         io::stdin().read_line(&mut input).expect("Failed to read line");
         input = input.trim().to_string();
 
+        // Split command into name and arguments
+        let mut parts = input.split_whitespace();
+        let command = parts.next().unwrap_or("");
+        let args: Vec<&str> = parts.collect();
+
         // Route the command
-        match input.as_str() {
+        match command {
             "exit" => break,
-            _ => invalid_command_error(&input),
+            "echo" => println!("{}", args.join(" ")),
+            _ => invalid_command_error(command),
         }
     }
 }
