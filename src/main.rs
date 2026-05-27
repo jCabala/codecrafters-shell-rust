@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 
 
 fn builtin_commands() -> Vec<&'static str> {
@@ -70,8 +71,7 @@ fn main() {
                 _ => eprintln!("panic: unknown builtin command '{}'", command),
             }
         } else if let TypeResult::External(path) = command_type {
-            // Command adds the path to the arguments
-            let _ = std::process::Command::new(path).args(&args).status();
+            let _ = std::process::Command::new(&path).arg0(command).args(&args).status();
         } else {
             eprintln!("{}: command not found", command);
         }
