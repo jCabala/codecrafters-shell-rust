@@ -243,7 +243,15 @@ impl Completer for ShellHelper {
     fn complete(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> rustyline::Result<(usize, Vec<Pair>)> {
         let word = &line[..pos];
         if word.contains(' ') {
-            return self.file_completer.complete(line, pos, _ctx);
+            let (start, candidates) = self.file_completer.complete(line, pos, _ctx)?;
+            let candidates = candidates.into_iter().map(|p| {
+                if p.replacement.ends_with('/') {
+                    p
+                } else {
+                    Pair { display: p.display, replacement: format!("{} ", p.replacement) }
+                }
+            }).collect();
+            return Ok((start, candidates));
         }
         let mut candidates: Vec<Pair> = builtin_commands()
             .iter()
