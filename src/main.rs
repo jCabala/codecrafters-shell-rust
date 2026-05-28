@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use rustyline::{Editor, Helper, Hinter, Highlighter, Validator, Context, Config, CompletionType, error::ReadlineError};
-use rustyline::completion::{Completer, Pair};
+use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::history::DefaultHistory;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -221,6 +221,7 @@ fn execute(command: Command, stdout_file: Option<std::fs::File>, stderr_file: Op
 #[derive(Helper, Hinter, Highlighter, Validator)]
 struct ShellHelper {
     executables: Arc<OnceLock<HashMap<String, String>>>,
+    file_completer: FilenameCompleter,
 }
 
 impl ShellHelper {
@@ -228,7 +229,7 @@ impl ShellHelper {
         let executables = Arc::new(OnceLock::new());
         let bg = Arc::clone(&executables);
         std::thread::spawn(move || { bg.get_or_init(build_executables); });
-        Self { executables }
+        Self { executables, file_completer: FilenameCompleter::new() }
     }
 
     fn executables(&self) -> &HashMap<String, String> {
@@ -242,7 +243,7 @@ impl Completer for ShellHelper {
     fn complete(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> rustyline::Result<(usize, Vec<Pair>)> {
         let word = &line[..pos];
         if word.contains(' ') {
-            return Ok((pos, vec![]));
+            return self.file_completer.complete(line, pos, _ctx);
         }
         let mut candidates: Vec<Pair> = builtin_commands()
             .iter()
