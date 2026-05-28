@@ -34,7 +34,7 @@ struct Command {
 }
 
 fn builtin_commands() -> Vec<&'static str> {
-    vec!["exit", "echo", "type", "pwd", "cd"]
+    vec!["exit", "echo", "type", "pwd", "cd", "jobs"]
 }
 
 fn build_executables() -> HashMap<String, String> {
@@ -197,6 +197,7 @@ fn execute(command: Command, stdout_file: Option<std::fs::File>, stderr_file: Op
                         }
                     }
                 }
+                "jobs" => writeln!(out, "\n").unwrap(),
                 _ => writeln!(err, "panic: unknown builtin command '{}'", name).unwrap(),
             }
         }
