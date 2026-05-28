@@ -185,16 +185,18 @@ impl Streams {
 
 struct BackgroundJob {
     pid: u32,
+    name: String,
 }
 
 struct BackgroundJobHandler {
     jobs: HashMap<usize, BackgroundJob>,
     next_id: usize,
+    completed: Vec<(usize, String)>,
 }
 
 impl BackgroundJobHandler {
     fn new() -> Self {
-        Self { jobs: HashMap::new(), next_id: 1 }
+        Self { jobs: HashMap::new(), next_id: 1, completed: Vec::new() }
     }
 
     fn next_job_id(&mut self) -> usize {
@@ -203,8 +205,18 @@ impl BackgroundJobHandler {
         id
     }
 
-    fn register_job(&mut self, job_id: usize, pid: u32) {
-        self.jobs.insert(job_id, BackgroundJob { pid });
+    fn register_job(&mut self, job_id: usize, pid: u32, name: String) {
+        self.jobs.insert(job_id, BackgroundJob { pid, name });
+    }
+
+    fn mark_done(&mut self, job_id: usize) {
+        if let Some(job) = self.jobs.remove(&job_id) {
+            self.completed.push((job_id, job.name));
+        }
+    }
+
+    fn drain_completed(&mut self) -> Vec<(usize, String)> {
+        std::mem::take(&mut self.completed)
     }
 
     fn list_jobs(&self, out: &mut dyn Write) {
@@ -306,12 +318,13 @@ fn execute(
         let job_id = bg_jobs.lock().unwrap().next_job_id();
         let (id_tx, id_rx) = std::sync::mpsc::channel::<u32>();
         let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let bg_jobs_clone = Arc::clone(&bg_jobs);
         std::thread::spawn(move || {
             work(id_tx, go_rx);
-            eprintln!("\n[{}]+  Done    {}", job_id, name_done);
+            bg_jobs_clone.lock().unwrap().mark_done(job_id);
         });
         let id = id_rx.recv().unwrap_or(0);
-        bg_jobs.lock().unwrap().register_job(job_id, id);
+        bg_jobs.lock().unwrap().register_job(job_id, id, name_done);
         println!("[{}] {}", job_id, id);
         go_tx.send(()).ok();
         false
@@ -337,9 +350,7 @@ impl ShellHelper {
         Self { executables, file_completer: FilenameCompleter::new() }
     }
 
-    fn executables(&self) -> &HashMap<String, String> {
-        self.executables.get_or_init(build_executables)
-    }
+
 }
 
 impl Completer for ShellHelper {
@@ -362,12 +373,14 @@ impl Completer for ShellHelper {
             .iter()
             .filter(|cmd| cmd.starts_with(word))
             .map(|cmd| Pair { display: cmd.to_string(), replacement: format!("{} ", cmd) })
-            .chain(
-                self.executables().keys()
+            .collect();
+        if let Some(executables) = self.executables.get() {
+            candidates.extend(
+                executables.keys()
                     .filter(|name| name.starts_with(word))
                     .map(|name| Pair { display: name.to_string(), replacement: format!("{} ", name) })
-            )
-            .collect();
+            );
+        }
         candidates.sort_by(|a, b| a.display.cmp(&b.display));
         candidates.dedup_by(|a, b| a.display == b.display);
         Ok((0, candidates))
@@ -380,6 +393,10 @@ fn main() {
     let mut editor: Editor<ShellHelper, DefaultHistory> = Editor::with_config(config).expect("Failed to create line editor");
     editor.set_helper(Some(ShellHelper::new()));
     loop {
+        for (id, name) in bg_jobs.lock().unwrap().drain_completed() {
+            eprintln!("[{}]+  Done    {}", id, name);
+        }
+
         let input = match editor.readline("$ ") {
             Ok(line) => { editor.add_history_entry(&line).ok(); line }
             Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
