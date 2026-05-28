@@ -184,19 +184,21 @@ impl Streams {
 }
 
 struct BackgroundJob {
-    pid: u32,
+    _pid: u32,
     name: String,
+    cmd: String,
 }
 
 struct BackgroundJobHandler {
     jobs: HashMap<usize, BackgroundJob>,
     next_id: usize,
+    last_id: usize,
     completed: Vec<(usize, String)>,
 }
 
 impl BackgroundJobHandler {
     fn new() -> Self {
-        Self { jobs: HashMap::new(), next_id: 1, completed: Vec::new() }
+        Self { jobs: HashMap::new(), next_id: 1, last_id: 0, completed: Vec::new() }
     }
 
     fn next_job_id(&mut self) -> usize {
@@ -205,8 +207,9 @@ impl BackgroundJobHandler {
         id
     }
 
-    fn register_job(&mut self, job_id: usize, pid: u32, name: String) {
-        self.jobs.insert(job_id, BackgroundJob { pid, name });
+    fn register_job(&mut self, job_id: usize, pid: u32, name: String, cmd: String) {
+        self.last_id = job_id;
+        self.jobs.insert(job_id, BackgroundJob { _pid: pid, name, cmd });
     }
 
     fn mark_done(&mut self, job_id: usize) {
@@ -220,8 +223,12 @@ impl BackgroundJobHandler {
     }
 
     fn list_jobs(&self, out: &mut dyn Write) {
-        for (id, job) in &self.jobs {
-            writeln!(out, "[{}] {}", id, job.pid).unwrap();
+        let mut ids: Vec<usize> = self.jobs.keys().copied().collect();
+        ids.sort();
+        for id in ids {
+            let job = &self.jobs[&id];
+            let marker = if id == self.last_id { '+' } else { '-' };
+            writeln!(out, "[{}]{}  {:<24}{} &", id, marker, "Running", job.cmd).unwrap();
         }
     }
 }
@@ -287,6 +294,7 @@ fn execute(
     }
 
     let name_done = name.clone();
+    let cmd_str = if args.is_empty() { name.clone() } else { format!("{} {}", name, args.join(" ")) };
     type Sender = std::sync::mpsc::Sender<u32>;
     type Receiver = std::sync::mpsc::Receiver<()>;
     let work: Box<dyn FnOnce(Sender, Receiver) -> bool + Send> = match command_type {
@@ -324,7 +332,7 @@ fn execute(
             bg_jobs_clone.lock().unwrap().mark_done(job_id);
         });
         let id = id_rx.recv().unwrap_or(0);
-        bg_jobs.lock().unwrap().register_job(job_id, id, name_done);
+        bg_jobs.lock().unwrap().register_job(job_id, id, name_done, cmd_str);
         println!("[{}] {}", job_id, id);
         go_tx.send(()).ok();
         false
