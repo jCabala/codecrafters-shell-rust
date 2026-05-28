@@ -193,12 +193,13 @@ struct BackgroundJobHandler {
     jobs: HashMap<usize, BackgroundJob>,
     next_id: usize,
     last_id: usize,
+    prev_id: usize,
     completed: Vec<(usize, String)>,
 }
 
 impl BackgroundJobHandler {
     fn new() -> Self {
-        Self { jobs: HashMap::new(), next_id: 1, last_id: 0, completed: Vec::new() }
+        Self { jobs: HashMap::new(), next_id: 1, last_id: 0, prev_id: 0, completed: Vec::new() }
     }
 
     fn next_job_id(&mut self) -> usize {
@@ -208,6 +209,7 @@ impl BackgroundJobHandler {
     }
 
     fn register_job(&mut self, job_id: usize, pid: u32, name: String, cmd: String) {
+        self.prev_id = self.last_id;
         self.last_id = job_id;
         self.jobs.insert(job_id, BackgroundJob { _pid: pid, name, cmd });
     }
@@ -227,7 +229,7 @@ impl BackgroundJobHandler {
         ids.sort();
         for id in ids {
             let job = &self.jobs[&id];
-            let marker = if id == self.last_id { '+' } else { '-' };
+            let marker = if id == self.last_id { '+' } else if id == self.prev_id { '-' } else { ' ' };
             writeln!(out, "[{}]{}  {:<24}{} &", id, marker, "Running", job.cmd).unwrap();
         }
     }
