@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use rustyline::{Editor, Helper, Hinter, Highlighter, Validator, Context, Config, CompletionType, error::ReadlineError};
@@ -31,6 +31,7 @@ struct Command {
     args: Vec<String>,
     redirects: Vec<Redirect>,
     command_type: CommandKind,
+    is_background: bool,
 }
 
 fn builtin_commands() -> Vec<&'static str> {
@@ -133,8 +134,13 @@ fn parse_command(input: &str, executables: &OnceLock<HashMap<String, String>>) -
     let all_args = parse_args(input);
     let name = all_args.get(0).cloned().unwrap_or_default();
     let command_type = get_command_type(&name, executables);
-    let (args, redirects) = parse_redirects(all_args);
-    Command { name, args, redirects, command_type }
+    let (mut args, redirects) = parse_redirects(all_args);
+
+    let is_background = args.last() == Some(&"&".into());
+    if is_background {
+        args.pop();
+    }
+    Command { name, args, redirects, command_type, is_background }
 }
 
 fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
@@ -152,73 +158,169 @@ fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
     result
 }
 
-fn execute(command: Command, stdout_file: Option<std::fs::File>, stderr_file: Option<std::fs::File>, executables: &OnceLock<HashMap<String, String>>) -> bool {
-    let Command { name, args, command_type, .. } = command;
-    match command_type {
-        CommandKind::Builtin => {
-            let mut out: Box<dyn Write> = match stdout_file {
-                Some(f) => Box::new(f),
-                None => Box::new(io::stdout()),
-            };
-            let mut err: Box<dyn Write> = match stderr_file {
-                Some(f) => Box::new(f),
-                None => Box::new(io::stderr()),
-            };
-            match name.as_str() {
-                "exit" => return true,
-                "echo" => writeln!(out, "{}", args.join(" ")).unwrap(),
-                "type" => {
-                    for arg in &args {
-                        match get_command_type(arg, executables) {
-                            CommandKind::Builtin => writeln!(out, "{} is a shell builtin", arg).unwrap(),
-                            CommandKind::External(path) => writeln!(out, "{} is {}", arg, path).unwrap(),
-                            CommandKind::NotFound => writeln!(err, "{}: not found", arg).unwrap(),
-                        }
-                    }
+struct Streams {
+    stdout: Option<std::fs::File>,
+    stderr: Option<std::fs::File>,
+}
+
+impl Streams {
+    fn from_redirects(redirects: &[Redirect]) -> Self {
+        Self {
+            stdout: resolve_fd(redirects, Fd::Stdout),
+            stderr: resolve_fd(redirects, Fd::Stderr),
+        }
+    }
+
+    fn into_writers(self) -> (Box<dyn Write + Send>, Box<dyn Write + Send>) {
+        let out: Box<dyn Write + Send> = match self.stdout { Some(f) => Box::new(f), None => Box::new(io::stdout()) };
+        let err: Box<dyn Write + Send> = match self.stderr { Some(f) => Box::new(f), None => Box::new(io::stderr()) };
+        (out, err)
+    }
+
+    fn apply_to_cmd(self, cmd: &mut std::process::Command) {
+        if let Some(f) = self.stdout { cmd.stdout(std::process::Stdio::from(f)); }
+        if let Some(f) = self.stderr { cmd.stderr(std::process::Stdio::from(f)); }
+    }
+}
+
+struct BackgroundJob {
+    pid: u32,
+}
+
+struct BackgroundJobHandler {
+    jobs: HashMap<usize, BackgroundJob>,
+    next_id: usize,
+}
+
+impl BackgroundJobHandler {
+    fn new() -> Self {
+        Self { jobs: HashMap::new(), next_id: 1 }
+    }
+
+    fn next_job_id(&mut self) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    fn register_job(&mut self, job_id: usize, pid: u32) {
+        self.jobs.insert(job_id, BackgroundJob { pid });
+    }
+
+    fn list_jobs(&self, out: &mut dyn Write) {
+        for (id, job) in &self.jobs {
+            writeln!(out, "[{}] {}", id, job.pid).unwrap();
+        }
+    }
+}
+
+fn run_builtin(
+    name: &str,
+    args: &[String],
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    executables: &Arc<OnceLock<HashMap<String, String>>>,
+    bg_jobs: &Arc<Mutex<BackgroundJobHandler>>,
+) -> bool {
+    match name {
+        "exit" => return true,
+        "echo" => writeln!(out, "{}", args.join(" ")).unwrap(),
+        "type" => {
+            for arg in args {
+                match get_command_type(arg, executables) {
+                    CommandKind::Builtin => writeln!(out, "{} is a shell builtin", arg).unwrap(),
+                    CommandKind::External(path) => writeln!(out, "{} is {}", arg, path).unwrap(),
+                    CommandKind::NotFound => writeln!(err, "{}: not found", arg).unwrap(),
                 }
-                "pwd" => {
-                    if let Ok(path) = std::env::current_dir() {
-                        writeln!(out, "{}", path.display()).unwrap();
-                    } else {
-                        writeln!(err, "pwd: error getting current directory").unwrap();
-                    }
-                }
-                "cd" => {
-                    if args.is_empty() || args[0] == "~" {
-                        if let Ok(path) = std::env::var("HOME") {
-                            if let Err(_) = std::env::set_current_dir(&path) {
-                                writeln!(err, "cd: {}: No such file or directory", path).unwrap();
-                            }
-                        }
-                    } else {
-                        let path = &args[0];
-                        if let Err(_) = std::env::set_current_dir(path) {
-                            writeln!(err, "cd: {}: No such file or directory", path).unwrap();
-                        }
-                    }
-                }
-                "jobs" => {
-                    
-                }
-                _ => writeln!(err, "panic: unknown builtin command '{}'", name).unwrap(),
             }
+        }
+        "pwd" => {
+            if let Ok(path) = std::env::current_dir() {
+                writeln!(out, "{}", path.display()).unwrap();
+            } else {
+                writeln!(err, "pwd: error getting current directory").unwrap();
+            }
+        }
+        "cd" => {
+            if args.is_empty() || args[0] == "~" {
+                if let Ok(path) = std::env::var("HOME") {
+                    if let Err(_) = std::env::set_current_dir(&path) {
+                        writeln!(err, "cd: {}: No such file or directory", path).unwrap();
+                    }
+                }
+            } else {
+                let path = &args[0];
+                if let Err(_) = std::env::set_current_dir(path) {
+                    writeln!(err, "cd: {}: No such file or directory", path).unwrap();
+                }
+            }
+        }
+        "jobs" => bg_jobs.lock().unwrap().list_jobs(out),
+        _ => writeln!(err, "panic: unknown builtin command '{}'", name).unwrap(),
+    }
+    false
+}
+
+fn execute(
+    command: Command,
+    streams: Streams,
+    executables: Arc<OnceLock<HashMap<String, String>>>,
+    bg_jobs: Arc<Mutex<BackgroundJobHandler>>,
+) -> bool {
+    let Command { name, args, command_type, is_background, .. } = command;
+
+    if matches!(command_type, CommandKind::NotFound) {
+        eprintln!("{}: command not found", name);
+        return false;
+    }
+
+    let name_done = name.clone();
+    type Sender = std::sync::mpsc::Sender<u32>;
+    type Receiver = std::sync::mpsc::Receiver<()>;
+    let work: Box<dyn FnOnce(Sender, Receiver) -> bool + Send> = match command_type {
+        CommandKind::Builtin => {
+            let (mut out, mut err) = streams.into_writers();
+            let bg_clone = Arc::clone(&bg_jobs);
+            Box::new(move |id_tx, go_rx| {
+                id_tx.send(unsafe { libc::gettid() } as u32).ok();
+                go_rx.recv().ok();
+                run_builtin(&name, &args, &mut *out, &mut *err, &executables, &bg_clone)
+            })
         }
         CommandKind::External(path) => {
             let mut cmd = std::process::Command::new(&path);
             cmd.arg0(&name).args(&args);
-            if let Some(file) = stdout_file {
-                cmd.stdout(std::process::Stdio::from(file));
-            }
-            if let Some(file) = stderr_file {
-                cmd.stderr(std::process::Stdio::from(file));
-            }
-            let _ = cmd.status();
+            streams.apply_to_cmd(&mut cmd);
+            Box::new(move |id_tx, go_rx| {
+                match cmd.spawn() {
+                    Ok(mut child) => { id_tx.send(child.id()).ok(); go_rx.recv().ok(); child.wait().ok(); }
+                    Err(e) => { id_tx.send(0).ok(); go_rx.recv().ok(); eprintln!("{}: {}", name, e); }
+                }
+                false
+            })
         }
-        CommandKind::NotFound => {
-            eprintln!("{}: command not found", name);
-        }
+        CommandKind::NotFound => unreachable!(),
+    };
+
+    if is_background {
+        let job_id = bg_jobs.lock().unwrap().next_job_id();
+        let (id_tx, id_rx) = std::sync::mpsc::channel::<u32>();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            work(id_tx, go_rx);
+            eprintln!("\n[{}]+  Done    {}", job_id, name_done);
+        });
+        let id = id_rx.recv().unwrap_or(0);
+        bg_jobs.lock().unwrap().register_job(job_id, id);
+        println!("[{}] {}", job_id, id);
+        go_tx.send(()).ok();
+        false
+    } else {
+        let (id_tx, _) = std::sync::mpsc::channel::<u32>();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        go_tx.send(()).ok();
+        work(id_tx, go_rx)
     }
-    false
 }
 
 #[derive(Helper, Hinter, Highlighter, Validator)]
@@ -273,6 +375,7 @@ impl Completer for ShellHelper {
 }
 
 fn main() {
+    let bg_jobs = Arc::new(Mutex::new(BackgroundJobHandler::new()));
     let config = Config::builder().completion_type(CompletionType::List).build();
     let mut editor: Editor<ShellHelper, DefaultHistory> = Editor::with_config(config).expect("Failed to create line editor");
     editor.set_helper(Some(ShellHelper::new()));
@@ -289,10 +392,9 @@ fn main() {
             continue;
         }
 
-        let stdout_file = resolve_fd(&command.redirects, Fd::Stdout);
-        let stderr_file = resolve_fd(&command.redirects, Fd::Stderr);
-
-        if execute(command, stdout_file, stderr_file, executables) {
+        let executables_arc = Arc::clone(&editor.helper().unwrap().executables);
+        let streams = Streams::from_redirects(&command.redirects);
+        if execute(command, streams, executables_arc, Arc::clone(&bg_jobs)) {
             break;
         }
     }
