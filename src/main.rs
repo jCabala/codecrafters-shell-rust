@@ -246,7 +246,7 @@ impl Completer for ShellHelper {
             let (start, candidates) = self.file_completer.complete(line, pos, _ctx)?;
             let candidates = candidates.into_iter().map(|p| {
                 if p.replacement.ends_with('/') {
-                    p
+                    Pair { display: format!("{}/", p.display), replacement: p.replacement }
                 } else {
                     Pair { display: p.display, replacement: format!("{} ", p.replacement) }
                 }
