@@ -184,7 +184,7 @@ impl Streams {
 }
 
 struct BackgroundJob {
-    _pid: u32,
+    child: Option<std::process::Child>,
     name: String,
     cmd: String,
 }
@@ -208,10 +208,10 @@ impl BackgroundJobHandler {
         id
     }
 
-    fn register_job(&mut self, job_id: usize, pid: u32, name: String, cmd: String) {
+    fn register_job(&mut self, job_id: usize, child: Option<std::process::Child>, name: String, cmd: String) {
         self.prev_id = self.last_id;
         self.last_id = job_id;
-        self.jobs.insert(job_id, BackgroundJob { _pid: pid, name, cmd });
+        self.jobs.insert(job_id, BackgroundJob { child, name, cmd });
     }
 
     fn mark_done(&mut self, job_id: usize) {
@@ -224,13 +224,33 @@ impl BackgroundJobHandler {
         std::mem::take(&mut self.completed)
     }
 
-    fn list_jobs(&self, out: &mut dyn Write) {
+    fn list_jobs(&mut self, out: &mut dyn Write) {
         let mut ids: Vec<usize> = self.jobs.keys().copied().collect();
         ids.sort();
-        for id in ids {
+
+        let mut done_ids = Vec::new();
+        for &id in &ids {
+            if let Some(job) = self.jobs.get_mut(&id) {
+                if let Some(ref mut child) = job.child {
+                    if matches!(child.try_wait(), Ok(Some(_))) {
+                        done_ids.push(id);
+                    }
+                }
+            }
+        }
+
+        for &id in &ids {
             let job = &self.jobs[&id];
             let marker = if id == self.last_id { '+' } else if id == self.prev_id { '-' } else { ' ' };
-            writeln!(out, "[{}]{}  {:<24}{} &", id, marker, "Running", job.cmd).unwrap();
+            if done_ids.contains(&id) {
+                writeln!(out, "[{}]{}  {:<24}{}", id, marker, "Done", job.cmd).unwrap();
+            } else {
+                writeln!(out, "[{}]{}  {:<24}{} &", id, marker, "Running", job.cmd).unwrap();
+            }
+        }
+
+        for id in done_ids {
+            self.jobs.remove(&id);
         }
     }
 }
@@ -295,54 +315,53 @@ fn execute(
         return false;
     }
 
-    let name_done = name.clone();
     let cmd_str = if args.is_empty() { name.clone() } else { format!("{} {}", name, args.join(" ")) };
-    type Sender = std::sync::mpsc::Sender<u32>;
-    type Receiver = std::sync::mpsc::Receiver<()>;
-    let work: Box<dyn FnOnce(Sender, Receiver) -> bool + Send> = match command_type {
-        CommandKind::Builtin => {
-            let (mut out, mut err) = streams.into_writers();
-            let bg_clone = Arc::clone(&bg_jobs);
-            Box::new(move |id_tx, go_rx| {
-                id_tx.send(unsafe { libc::gettid() } as u32).ok();
-                go_rx.recv().ok();
-                run_builtin(&name, &args, &mut *out, &mut *err, &executables, &bg_clone)
-            })
-        }
-        CommandKind::External(path) => {
+
+    match (command_type, is_background) {
+        (CommandKind::External(path), false) => {
             let mut cmd = std::process::Command::new(&path);
             cmd.arg0(&name).args(&args);
             streams.apply_to_cmd(&mut cmd);
-            Box::new(move |id_tx, go_rx| {
-                match cmd.spawn() {
-                    Ok(mut child) => { id_tx.send(child.id()).ok(); go_rx.recv().ok(); child.wait().ok(); }
-                    Err(e) => { id_tx.send(0).ok(); go_rx.recv().ok(); eprintln!("{}: {}", name, e); }
-                }
-                false
-            })
+            match cmd.spawn() {
+                Ok(mut child) => { child.wait().ok(); }
+                Err(e) => eprintln!("{}: {}", name, e),
+            }
+            false
         }
-        CommandKind::NotFound => unreachable!(),
-    };
-
-    if is_background {
-        let job_id = bg_jobs.lock().unwrap().next_job_id();
-        let (id_tx, id_rx) = std::sync::mpsc::channel::<u32>();
-        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
-        let bg_jobs_clone = Arc::clone(&bg_jobs);
-        std::thread::spawn(move || {
-            work(id_tx, go_rx);
-            bg_jobs_clone.lock().unwrap().mark_done(job_id);
-        });
-        let id = id_rx.recv().unwrap_or(0);
-        bg_jobs.lock().unwrap().register_job(job_id, id, name_done, cmd_str);
-        println!("[{}] {}", job_id, id);
-        go_tx.send(()).ok();
-        false
-    } else {
-        let (id_tx, _) = std::sync::mpsc::channel::<u32>();
-        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
-        go_tx.send(()).ok();
-        work(id_tx, go_rx)
+        (CommandKind::External(path), true) => {
+            let mut cmd = std::process::Command::new(&path);
+            cmd.arg0(&name).args(&args);
+            streams.apply_to_cmd(&mut cmd);
+            match cmd.spawn() {
+                Ok(child) => {
+                    let pid = child.id();
+                    let job_id = bg_jobs.lock().unwrap().next_job_id();
+                    println!("[{}] {}", job_id, pid);
+                    bg_jobs.lock().unwrap().register_job(job_id, Some(child), name, cmd_str);
+                }
+                Err(e) => eprintln!("{}: {}", name, e),
+            }
+            false
+        }
+        (CommandKind::Builtin, false) => {
+            let (mut out, mut err) = streams.into_writers();
+            run_builtin(&name, &args, &mut *out, &mut *err, &executables, &bg_jobs)
+        }
+        (CommandKind::Builtin, true) => {
+            let job_id = bg_jobs.lock().unwrap().next_job_id();
+            let name_for_reg = name.clone();
+            let bg_jobs_clone = Arc::clone(&bg_jobs);
+            let bg_for_builtin = Arc::clone(&bg_jobs);
+            let (mut out, mut err) = streams.into_writers();
+            std::thread::spawn(move || {
+                run_builtin(&name, &args, &mut *out, &mut *err, &executables, &bg_for_builtin);
+                bg_jobs_clone.lock().unwrap().mark_done(job_id);
+            });
+            println!("[{}] 0", job_id);
+            bg_jobs.lock().unwrap().register_job(job_id, None, name_for_reg, cmd_str);
+            false
+        }
+        (CommandKind::NotFound, _) => unreachable!(),
     }
 }
 
