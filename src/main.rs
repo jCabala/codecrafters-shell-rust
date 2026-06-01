@@ -214,8 +214,18 @@ impl BackgroundJobHandler {
         self.jobs.insert(job_id, BackgroundJob { child, name, cmd });
     }
 
+    fn update_markers_after_removal(&mut self, removed_id: usize) {
+        if removed_id == self.last_id {
+            self.last_id = self.prev_id;
+            self.prev_id = self.jobs.keys().copied().filter(|&id| id != self.last_id).max().unwrap_or(0);
+        } else if removed_id == self.prev_id {
+            self.prev_id = self.jobs.keys().copied().filter(|&id| id != self.last_id).max().unwrap_or(0);
+        }
+    }
+
     fn mark_done(&mut self, job_id: usize) {
         if let Some(job) = self.jobs.remove(&job_id) {
+            self.update_markers_after_removal(job_id);
             self.completed.push((job_id, job.name));
         }
     }
@@ -227,6 +237,7 @@ impl BackgroundJobHandler {
                 if let Some(ref mut child) = job.child {
                     if matches!(child.try_wait(), Ok(Some(_))) {
                         if let Some(job) = self.jobs.remove(&id) {
+                            self.update_markers_after_removal(id);
                             self.completed.push((id, job.name));
                         }
                     }
@@ -263,6 +274,7 @@ impl BackgroundJobHandler {
 
         for id in done_ids {
             self.jobs.remove(&id);
+            self.update_markers_after_removal(id);
         }
     }
 }
