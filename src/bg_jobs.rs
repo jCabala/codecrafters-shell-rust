@@ -41,7 +41,7 @@ impl BackgroundJobRegistry {
         done_ids.sort();
         done_ids.into_iter().filter_map(|id| {
             self.jobs.remove(&id).map(|job| {
-                self.update_markers_after_removal(id);
+                self.update_markers_after_removal(id, false);
                 (id, job.name)
             })
         }).collect()
@@ -65,16 +65,20 @@ impl BackgroundJobRegistry {
 
         for id in done_ids {
             self.jobs.remove(&id);
-            self.update_markers_after_removal(id);
+            self.update_markers_after_removal(id, true);
         }
     }
 
-    fn update_markers_after_removal(&mut self, removed_id: usize) {
+    fn update_markers_after_removal(&mut self, removed_id: usize, promote_prev: bool) {
         if removed_id == self.last_id {
             self.last_id = self.prev_id;
             self.prev_id = self.jobs.keys().copied().filter(|&id| id != self.last_id).max().unwrap_or(0);
         } else if removed_id == self.prev_id {
-            self.prev_id = 0;
+            self.prev_id = if promote_prev {
+                self.jobs.keys().copied().filter(|&id| id != self.last_id).max().unwrap_or(0)
+            } else {
+                0
+            };
         }
     }
 }
