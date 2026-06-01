@@ -54,7 +54,7 @@ impl BackgroundJobRegistry {
             self.last_id = self.prev_id;
             self.prev_id = self.jobs.keys().copied().filter(|&id| id != self.last_id).max().unwrap_or(0);
         } else if removed_id == self.prev_id {
-            self.prev_id = self.jobs.keys().copied().filter(|&id| id != self.last_id).max().unwrap_or(0);
+            self.prev_id = 0;
         }
     }
 }
