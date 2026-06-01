@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use rustyline::{Editor, Helper, Hinter, Highlighter, Validator, Context, Config, CompletionType, error::ReadlineError};
@@ -54,10 +54,10 @@ fn build_executables() -> HashMap<String, String> {
     map
 }
 
-fn get_command_type(command: &str, executables: &OnceLock<HashMap<String, String>>) -> CommandKind {
+fn get_command_type(command: &str, executables: &HashMap<String, String>) -> CommandKind {
     if builtin_commands().contains(&command) {
         CommandKind::Builtin
-    } else if let Some(path) = executables.get_or_init(build_executables).get(command) {
+    } else if let Some(path) = executables.get(command) {
         CommandKind::External(path.clone())
     } else {
         CommandKind::NotFound
@@ -130,7 +130,7 @@ fn parse_redirects(all_args: Vec<String>) -> (Vec<String>, Vec<Redirect>) {
     (args, redirects)
 }
 
-fn parse_command(input: &str, executables: &OnceLock<HashMap<String, String>>) -> Command {
+fn parse_command(input: &str, executables: &HashMap<String, String>) -> Command {
     let all_args = parse_args(input);
     let name = all_args.get(0).cloned().unwrap_or_default();
     let command_type = get_command_type(&name, executables);
@@ -221,6 +221,18 @@ impl BackgroundJobHandler {
     }
 
     fn drain_completed(&mut self) -> Vec<(usize, String)> {
+        let ids: Vec<usize> = self.jobs.keys().copied().collect();
+        for id in ids {
+            if let Some(job) = self.jobs.get_mut(&id) {
+                if let Some(ref mut child) = job.child {
+                    if matches!(child.try_wait(), Ok(Some(_))) {
+                        if let Some(job) = self.jobs.remove(&id) {
+                            self.completed.push((id, job.name));
+                        }
+                    }
+                }
+            }
+        }
         std::mem::take(&mut self.completed)
     }
 
@@ -260,7 +272,7 @@ fn run_builtin(
     args: &[String],
     out: &mut dyn Write,
     err: &mut dyn Write,
-    executables: &Arc<OnceLock<HashMap<String, String>>>,
+    executables: &HashMap<String, String>,
     bg_jobs: &Arc<Mutex<BackgroundJobHandler>>,
 ) -> bool {
     match name {
@@ -305,7 +317,7 @@ fn run_builtin(
 fn execute(
     command: Command,
     streams: Streams,
-    executables: Arc<OnceLock<HashMap<String, String>>>,
+    executables: Arc<HashMap<String, String>>,
     bg_jobs: Arc<Mutex<BackgroundJobHandler>>,
 ) -> bool {
     let Command { name, args, command_type, is_background, .. } = command;
@@ -352,9 +364,10 @@ fn execute(
             let name_for_reg = name.clone();
             let bg_jobs_clone = Arc::clone(&bg_jobs);
             let bg_for_builtin = Arc::clone(&bg_jobs);
+            let executables_clone = Arc::clone(&executables);
             let (mut out, mut err) = streams.into_writers();
             std::thread::spawn(move || {
-                run_builtin(&name, &args, &mut *out, &mut *err, &executables, &bg_for_builtin);
+                run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_for_builtin);
                 bg_jobs_clone.lock().unwrap().mark_done(job_id);
             });
             println!("[{}] 0", job_id);
@@ -367,19 +380,14 @@ fn execute(
 
 #[derive(Helper, Hinter, Highlighter, Validator)]
 struct ShellHelper {
-    executables: Arc<OnceLock<HashMap<String, String>>>,
+    executables: Arc<HashMap<String, String>>,
     file_completer: FilenameCompleter,
 }
 
 impl ShellHelper {
-    fn new() -> Self {
-        let executables = Arc::new(OnceLock::new());
-        let bg = Arc::clone(&executables);
-        std::thread::spawn(move || { bg.get_or_init(build_executables); });
+    fn new(executables: Arc<HashMap<String, String>>) -> Self {
         Self { executables, file_completer: FilenameCompleter::new() }
     }
-
-
 }
 
 impl Completer for ShellHelper {
@@ -403,13 +411,11 @@ impl Completer for ShellHelper {
             .filter(|cmd| cmd.starts_with(word))
             .map(|cmd| Pair { display: cmd.to_string(), replacement: format!("{} ", cmd) })
             .collect();
-        if let Some(executables) = self.executables.get() {
-            candidates.extend(
-                executables.keys()
-                    .filter(|name| name.starts_with(word))
-                    .map(|name| Pair { display: name.to_string(), replacement: format!("{} ", name) })
-            );
-        }
+        candidates.extend(
+            self.executables.keys()
+                .filter(|name| name.starts_with(word))
+                .map(|name| Pair { display: name.to_string(), replacement: format!("{} ", name) })
+        );
         candidates.sort_by(|a, b| a.display.cmp(&b.display));
         candidates.dedup_by(|a, b| a.display == b.display);
         Ok((0, candidates))
@@ -417,10 +423,11 @@ impl Completer for ShellHelper {
 }
 
 fn main() {
+    let executables = Arc::new(build_executables());
     let bg_jobs = Arc::new(Mutex::new(BackgroundJobHandler::new()));
     let config = Config::builder().completion_type(CompletionType::List).build();
     let mut editor: Editor<ShellHelper, DefaultHistory> = Editor::with_config(config).expect("Failed to create line editor");
-    editor.set_helper(Some(ShellHelper::new()));
+    editor.set_helper(Some(ShellHelper::new(Arc::clone(&executables))));
     loop {
         for (id, name) in bg_jobs.lock().unwrap().drain_completed() {
             eprintln!("[{}]+  Done    {}", id, name);
@@ -432,15 +439,13 @@ fn main() {
             Err(e) => { eprintln!("shell: {}", e); break; }
         };
 
-        let executables = &*editor.helper().unwrap().executables;
-        let command = parse_command(&input, executables);
+        let command = parse_command(&input, &executables);
         if command.name.is_empty() {
             continue;
         }
 
-        let executables_arc = Arc::clone(&editor.helper().unwrap().executables);
         let streams = Streams::from_redirects(&command.redirects);
-        if execute(command, streams, executables_arc, Arc::clone(&bg_jobs)) {
+        if execute(command, streams, Arc::clone(&executables), Arc::clone(&bg_jobs)) {
             break;
         }
     }
