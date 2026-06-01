@@ -2,7 +2,6 @@ use std::io::Write;
 use std::collections::HashMap;
 
 pub struct BackgroundJob {
-    name: String,
     pub cmd: String,
     pub done: bool,
 }
@@ -19,12 +18,12 @@ impl BackgroundJobRegistry {
         Self { jobs: HashMap::new(), next_id: 1, last_id: 0, prev_id: 0 }
     }
 
-    pub fn register_job(&mut self, name: String, cmd: String) -> usize {
+    pub fn register_job(&mut self, cmd: String) -> usize {
         let job_id = self.next_id;
         self.next_id += 1;
         self.prev_id = self.last_id;
         self.last_id = job_id;
-        self.jobs.insert(job_id, BackgroundJob { name, cmd, done: false });
+        self.jobs.insert(job_id, BackgroundJob { cmd, done: false });
         job_id
     }
 
@@ -34,15 +33,16 @@ impl BackgroundJobRegistry {
         }
     }
 
-    pub fn drain_completed(&mut self) -> Vec<(usize, String)> {
+    pub fn drain_completed(&mut self) -> Vec<(usize, char, String)> {
         let mut done_ids: Vec<usize> = self.jobs.iter()
             .filter_map(|(&id, j)| if j.done { Some(id) } else { None })
             .collect();
         done_ids.sort();
         done_ids.into_iter().filter_map(|id| {
+            let marker = if id == self.last_id { '+' } else if id == self.prev_id { '-' } else { ' ' };
             self.jobs.remove(&id).map(|job| {
                 self.update_markers_after_removal(id, false);
-                (id, job.name)
+                (id, marker, job.cmd)
             })
         }).collect()
     }

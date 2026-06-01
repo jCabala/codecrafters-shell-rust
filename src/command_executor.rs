@@ -5,11 +5,11 @@ use crate::bg_jobs::BackgroundJobRegistry;
 use crate::builtins::run_builtin;
 use crate::command::{Command, CommandKind, Streams};
 
-fn spawn_background<F>(bg_jobs: Arc<Mutex<BackgroundJobRegistry>>, pid: u32, name: String, cmd_str: String, f: F)
+fn spawn_background<F>(bg_jobs: Arc<Mutex<BackgroundJobRegistry>>, pid: u32, cmd_str: String, f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    let job_id = bg_jobs.lock().unwrap().register_job(name, cmd_str);
+    let job_id = bg_jobs.lock().unwrap().register_job(cmd_str);
     println!("[{}] {}", job_id, pid);
     std::thread::spawn(move || {
         f();
@@ -41,7 +41,7 @@ pub fn execute(
                 Ok(mut child) => {
                     if is_background {
                         let pid = child.id();
-                        spawn_background(Arc::clone(&bg_jobs), pid, name, cmd_str, move || { child.wait().ok(); });
+                        spawn_background(Arc::clone(&bg_jobs), pid, cmd_str, move || { child.wait().ok(); });
                     } else {
                         child.wait().ok();
                     }
@@ -55,7 +55,7 @@ pub fn execute(
             if is_background {
                 let executables_clone = Arc::clone(&executables);
                 let bg_for_builtin = Arc::clone(&bg_jobs);
-                spawn_background(Arc::clone(&bg_jobs), 0, name.clone(), cmd_str, move || {
+                spawn_background(Arc::clone(&bg_jobs), 0, cmd_str, move || {
                     run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_for_builtin);
                 });
                 false

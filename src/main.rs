@@ -23,8 +23,8 @@ fn main() {
     editor.set_helper(Some(Autocomplete::new(Arc::clone(&executables))));
     
     loop {
-        for (id, name) in bg_jobs.lock().unwrap().drain_completed() {
-            eprintln!("[{}]+  Done    {}", id, name);
+        for (id, marker, cmd) in bg_jobs.lock().unwrap().drain_completed() {
+            eprintln!("[{}]{}  {:<24}{}", id, marker, "Done", cmd);
         }
 
         let input = match editor.readline("$ ") {
