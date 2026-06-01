@@ -8,19 +8,17 @@ pub struct BackgroundJob {
 
 pub struct BackgroundJobRegistry {
     pub jobs: HashMap<usize, BackgroundJob>,
-    next_id: usize,
     last_id: usize,
     prev_id: usize,
 }
 
 impl BackgroundJobRegistry {
     pub fn new() -> Self {
-        Self { jobs: HashMap::new(), next_id: 1, last_id: 0, prev_id: 0 }
+        Self { jobs: HashMap::new(), last_id: 0, prev_id: 0 }
     }
 
     pub fn register_job(&mut self, cmd: String) -> usize {
-        let job_id = self.next_id;
-        self.next_id += 1;
+        let job_id = (1..).find(|id| !self.jobs.contains_key(id)).unwrap();
         self.prev_id = self.last_id;
         self.last_id = job_id;
         self.jobs.insert(job_id, BackgroundJob { cmd, done: false });
