@@ -27,7 +27,9 @@ pub fn execute_pipeline(
 
     for i in 0..n - 1 {
         let mut fds = [0i32; 2];
-        unsafe { libc::pipe(fds.as_mut_ptr()) };
+         /* O_CLOEXEC: close inherited write ends in child on exec, preventing self-deadlock
+            Why? EOF only when all write ends are closed. If a child inherits a write end and execs an external command, it may never close that write end, causing the parent to wait indefinitely for EOF. */
+        unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
         read_ends[i + 1] = Some(unsafe { File::from_raw_fd(fds[0]) });
         write_ends[i]    = Some(unsafe { File::from_raw_fd(fds[1]) });
     }
