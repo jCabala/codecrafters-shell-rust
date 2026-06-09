@@ -13,6 +13,14 @@ impl History {
         self.entries.push(entry);
     }
 
+    pub fn write_to_file(&self, path: &str) -> io::Result<()> {
+        let mut file = std::fs::File::create(path)?;
+        for entry in &self.entries {
+            writeln!(file, "{}", entry)?;
+        }
+        Ok(())
+    }
+
     pub fn read_from_file(&mut self, path: &str) -> io::Result<()> {
         let contents = std::fs::read_to_string(path)?;
         for line in contents.lines().filter(|l| !l.is_empty()) {
