@@ -14,4 +14,8 @@ impl CompletionRegistry {
     pub fn get(&self, command: &str) -> Option<&String> {
         self.completers.get(command)
     }
+
+    pub fn remove(&mut self, command: &str) {
+        self.completers.remove(command);
+    }
 }

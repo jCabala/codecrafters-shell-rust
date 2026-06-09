@@ -201,6 +201,7 @@ impl DeclareBuiltin {
 enum CompleteBuiltin {
     Register { script: String, command: String },
     PrintSpec(String),
+    Remove(String),
     InvalidUsage,
 }
 impl CompleteBuiltin {
@@ -213,6 +214,10 @@ impl CompleteBuiltin {
             },
             Some("-p") => match args.get(1) {
                 Some(command) => Self::PrintSpec(command.clone()),
+                None          => Self::InvalidUsage,
+            },
+            Some("-r") => match args.get(1) {
+                Some(command) => Self::Remove(command.clone()),
                 None          => Self::InvalidUsage,
             },
             _ => Self::InvalidUsage,
@@ -228,6 +233,8 @@ impl CompleteBuiltin {
                     None         => writeln!(ctx.err, "complete: {}: no completion specification", command).unwrap(),
                 }
             }
+            Self::Remove(command) =>
+                ctx.completions.lock().unwrap().remove(&command),
             Self::InvalidUsage =>
                 writeln!(ctx.err, "complete: usage: complete -C script command").unwrap(),
         }
