@@ -48,7 +48,11 @@ fn main() {
 
         history.lock().unwrap().push(input.clone());
 
-        let Some(pipeline) = parse_pipeline(&input, &executables) else { continue };
+        let pipeline = { 
+            let vars = variables.lock().unwrap();
+            parse_pipeline(&input, &executables, &vars)
+        };
+        let Some(pipeline) = pipeline else { continue };
         if execute_pipeline(pipeline, Arc::clone(&executables), Arc::clone(&bg_jobs), Arc::clone(&history), Arc::clone(&variables)) {
             break;
         }

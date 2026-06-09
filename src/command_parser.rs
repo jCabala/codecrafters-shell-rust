@@ -1,6 +1,7 @@
 use crate::builtins::is_builtin_command;
 use crate::command::{Command, CommandKind, Fd, Redirect, WriteMode};
 use crate::executables::ExecutableMap;
+use crate::variables::Variables;
 
 pub fn get_command_type(command: &str, executables: &ExecutableMap) -> Option<CommandKind> {
     if is_builtin_command(command) {
@@ -12,23 +13,41 @@ pub fn get_command_type(command: &str, executables: &ExecutableMap) -> Option<Co
     }
 }
 
-fn parse_args(input: &str) -> Vec<String> {
+fn expand_var(chars: &mut std::iter::Peekable<std::str::Chars>, variables: &Variables) -> String {
+    if chars.peek() == Some(&'{') {
+        chars.next();
+        let mut name = String::new();
+        for c in chars.by_ref() {
+            if c == '}' { break; }
+            name.push(c);
+        }
+        variables.get(&name).cloned().unwrap_or_default()
+    } else {
+        let mut name = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_alphanumeric() || c == '_' { name.push(c); chars.next(); }
+            else { break; }
+        }
+        if name.is_empty() { "$".to_string() }
+        else { variables.get(&name).cloned().unwrap_or_default() }
+    }
+}
+
+fn parse_args(input: &str, variables: &Variables) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();
     let mut in_single_quote = false;
     let mut in_double_quote = false;
-    let mut chars = input.chars();
+    let mut chars = input.chars().peekable();
 
     while let Some(c) = chars.next() {
         match c {
             '\\' if !in_single_quote && !in_double_quote => {
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                }
+                if let Some(next) = chars.next() { current.push(next); }
             }
             '\\' if in_double_quote => {
                 match chars.next() {
-                    Some(next @ '"') | Some(next @ '\\') => current.push(next),
+                    Some(next @ '"') | Some(next @ '\\') | Some(next @ '$') => current.push(next),
                     Some(next) => { current.push('\\'); current.push(next); }
                     None => current.push('\\'),
                 }
@@ -37,18 +56,14 @@ fn parse_args(input: &str) -> Vec<String> {
             '\'' if in_single_quote => in_single_quote = false,
             '"' if !in_single_quote && !in_double_quote => in_double_quote = true,
             '"' if in_double_quote => in_double_quote = false,
+            '$' if !in_single_quote => current.push_str(&expand_var(&mut chars, variables)),
             ' ' | '\t' if !in_single_quote && !in_double_quote => {
-                if !current.is_empty() {
-                    args.push(current.clone());
-                    current.clear();
-                }
+                if !current.is_empty() { args.push(current.clone()); current.clear(); }
             }
             _ => current.push(c),
         }
     }
-    if !current.is_empty() {
-        args.push(current);
-    }
+    if !current.is_empty() { args.push(current); }
     args
 }
 
@@ -106,7 +121,7 @@ pub struct Pipeline {
     pub is_background: bool,
 }
 
-pub fn parse_pipeline(input: &str, executables: &ExecutableMap) -> Option<Pipeline> {
+pub fn parse_pipeline(input: &str, executables: &ExecutableMap, variables: &Variables) -> Option<Pipeline> {
     let segments: Vec<&str> = split_pipeline(input)
         .into_iter()
         .map(str::trim)
@@ -119,7 +134,7 @@ pub fn parse_pipeline(input: &str, executables: &ExecutableMap) -> Option<Pipeli
 
     let mut commands = Vec::new();
     for s in segments {
-        match parse_command(s, executables) {
+        match parse_command(s, executables, variables) {
             Some(cmd) => commands.push(cmd),
             None => return None,
         }
@@ -152,8 +167,8 @@ pub fn parse_pipeline(input: &str, executables: &ExecutableMap) -> Option<Pipeli
     Some(Pipeline { commands, is_background })
 }
 
-fn parse_command(input: &str, executables: &ExecutableMap) -> Option<Command> {
-    let all_args = parse_args(input);
+fn parse_command(input: &str, executables: &ExecutableMap, variables: &Variables) -> Option<Command> {
+    let all_args = parse_args(input, variables);
     let name = all_args.get(0).cloned().unwrap_or_default();
     let command_type = match get_command_type(&name, executables) {
         Some(ct) => ct,
