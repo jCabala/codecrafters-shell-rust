@@ -50,14 +50,16 @@ pub fn run_builtin(
         }
         "jobs" => bg_jobs.lock().unwrap().list_jobs(out),
         "history" => {
-            let locked = history.lock().unwrap();
-            let all = locked.entries();
-            let start = args.get(0)
-                .and_then(|a| a.parse::<usize>().ok())
-                .map(|n| all.len().saturating_sub(n))
-                .unwrap_or(0);
-            for (i, entry) in all[start..].iter().enumerate() {
-                writeln!(out, "{:5}  {}", start + i + 1, entry).unwrap();
+            if args.first().map(|a| a == "-r").unwrap_or(false) {
+                match args.get(1) {
+                    None => writeln!(err, "history: -r: missing filename").unwrap(),
+                    Some(path) => if let Err(e) = history.lock().unwrap().read_from_file(path) {
+                        writeln!(err, "history: {}: {}", path, e).unwrap();
+                    }
+                }
+            } else {
+                let limit = args.first().and_then(|a| a.parse::<usize>().ok());
+                history.lock().unwrap().write_to(out, limit).unwrap();
             }
         }
         _ => writeln!(err, "panic: unknown builtin command '{}'", name).unwrap(),
