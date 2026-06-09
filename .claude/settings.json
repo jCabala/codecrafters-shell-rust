@@ -3,7 +3,8 @@
     "allow": [
       "Bash(./target/debug/codecrafters-shell)",
       "Read(//tmp/**)",
-      "Bash(echo \"exit code: $?\")"
+      "Bash(echo \"exit code: $?\")",
+      "Bash(cargo run *)"
     ]
   }
 }

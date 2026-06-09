@@ -22,13 +22,13 @@ pub fn build_executables() -> HashMap<String, String> {
     map
 }
 
-pub fn get_command_type(command: &str, executables: &HashMap<String, String>) -> CommandKind {
+pub fn get_command_type(command: &str, executables: &HashMap<String, String>) -> Option<CommandKind> {
     if builtin_commands().contains(&command) {
-        CommandKind::Builtin
+        Some(CommandKind::Builtin)
     } else if let Some(path) = executables.get(command) {
-        CommandKind::External(path.clone())
+        Some(CommandKind::External(path.clone()))
     } else {
-        CommandKind::NotFound
+        None
     }
 }
 
@@ -98,15 +98,87 @@ fn parse_redirects(all_args: Vec<String>) -> (Vec<String>, Vec<Redirect>) {
     (args, redirects)
 }
 
-pub fn parse_command(input: &str, executables: &HashMap<String, String>) -> Command {
+fn split_pipeline(input: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = input.char_indices();
+
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' if !in_single => { chars.next(); }
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '|' if !in_single && !in_double => {
+                segments.push(&input[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    segments.push(&input[start..]);
+    segments
+}
+
+pub struct Pipeline {
+    pub commands: Vec<Command>,
+    pub is_background: bool,
+}
+
+pub fn parse_pipeline(input: &str, executables: &HashMap<String, String>) -> Option<Pipeline> {
+    let segments: Vec<&str> = split_pipeline(input)
+        .into_iter()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    let mut commands = Vec::new();
+    for s in segments {
+        match parse_command(s, executables) {
+            Some(cmd) => commands.push(cmd),
+            None => return None,
+        }
+    }
+
+    let n = commands.len();
+    for (i, cmd) in commands.iter().enumerate() {
+        for (j, arg) in cmd.args.iter().enumerate() {
+            if arg == "&" {
+                let is_last_position = i == n - 1 && j == cmd.args.len() - 1;
+                if !is_last_position {
+                    eprintln!("syntax error near unexpected token '&'");
+                    return None;
+                }
+            }
+        }
+    }
+
+    let is_background = commands.last_mut()
+        .map(|cmd| {
+            if cmd.args.last().map(|a| a == "&").unwrap_or(false) {
+                cmd.args.pop();
+                true
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
+
+    Some(Pipeline { commands, is_background })
+}
+
+fn parse_command(input: &str, executables: &HashMap<String, String>) -> Option<Command> {
     let all_args = parse_args(input);
     let name = all_args.get(0).cloned().unwrap_or_default();
-    let command_type = get_command_type(&name, executables);
-    let (mut args, redirects) = parse_redirects(all_args);
-
-    let is_background = args.last() == Some(&"&".into());
-    if is_background {
-        args.pop();
-    }
-    Command { name, args, redirects, command_type, is_background }
+    let command_type = match get_command_type(&name, executables) {
+        Some(ct) => ct,
+        None => { eprintln!("{}: command not found", name); return None; }
+    };
+    let (args, redirects) = parse_redirects(all_args);
+    Some(Command { name, args, redirects, command_type })
 }

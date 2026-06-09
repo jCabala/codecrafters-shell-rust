@@ -11,9 +11,8 @@ mod command_parser;
 
 use autocomplete::Autocomplete;
 use bg_jobs::BackgroundJobRegistry;
-use command::Streams;
-use command_executor::execute;
-use command_parser::{build_executables, parse_command};
+use command_executor::execute_pipeline;
+use command_parser::{build_executables, parse_pipeline};
 
 fn main() {
     let executables = Arc::new(build_executables());
@@ -33,13 +32,8 @@ fn main() {
             Err(e) => { eprintln!("shell: {}", e); break; }
         };
 
-        let command = parse_command(&input, &executables);
-        if command.name.is_empty() {
-            continue;
-        }
-
-        let streams = Streams::from_redirects(&command.redirects);
-        if execute(command, streams, Arc::clone(&executables), Arc::clone(&bg_jobs)) {
+        let Some(pipeline) = parse_pipeline(&input, &executables) else { continue };
+        if execute_pipeline(pipeline, Arc::clone(&executables), Arc::clone(&bg_jobs)) {
             break;
         }
     }

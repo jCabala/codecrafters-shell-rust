@@ -1,68 +1,79 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::os::unix::io::FromRawFd;
 use std::sync::{Arc, Mutex};
 use std::os::unix::process::CommandExt;
 use crate::bg_jobs::BackgroundJobRegistry;
 use crate::builtins::run_builtin;
 use crate::command::{Command, CommandKind, Streams};
+use crate::command_parser::Pipeline;
 
-fn spawn_background<F>(bg_jobs: Arc<Mutex<BackgroundJobRegistry>>, pid: u32, cmd_str: String, f: F)
-where
-    F: FnOnce() + Send + 'static,
-{
-    let job_id = bg_jobs.lock().unwrap().register_job(cmd_str);
-    println!("[{}] {}", job_id, pid);
-    std::thread::spawn(move || {
-        f();
-        bg_jobs.lock().unwrap().mark_done(job_id);
-    });
-}
 
-pub fn execute(
-    command: Command,
-    streams: Streams,
+pub fn execute_pipeline(
+    pipeline: Pipeline,
     executables: Arc<HashMap<String, String>>,
     bg_jobs: Arc<Mutex<BackgroundJobRegistry>>,
 ) -> bool {
-    let Command { name, args, command_type, is_background, .. } = command;
+    let Pipeline { commands, is_background } = pipeline;
+    let n = commands.len();
 
-    if matches!(command_type, CommandKind::NotFound) {
-        eprintln!("{}: command not found", name);
-        return false;
+    let cmd_str = commands.iter()
+        .map(|c| if c.args.is_empty() { c.name.clone() } else { format!("{} {}", c.name, c.args.join(" ")) })
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    let mut read_ends:  Vec<Option<File>> = (0..n).map(|_| None).collect();
+    let mut write_ends: Vec<Option<File>> = (0..n).map(|_| None).collect();
+
+    for i in 0..n - 1 {
+        let mut fds = [0i32; 2];
+        unsafe { libc::pipe(fds.as_mut_ptr()) };
+        read_ends[i + 1] = Some(unsafe { File::from_raw_fd(fds[0]) });
+        write_ends[i]    = Some(unsafe { File::from_raw_fd(fds[1]) });
     }
 
-    let cmd_str = if args.is_empty() { name.clone() } else { format!("{} {}", name, args.join(" ")) };
+    let mut children: Vec<std::process::Child>          = Vec::new();
+    let mut threads:  Vec<std::thread::JoinHandle<bool>> = Vec::new();
 
-    match command_type {
-        CommandKind::External(path) => {
-            let mut cmd = std::process::Command::new(&path);
-            cmd.arg0(&name).args(&args);
-            streams.apply_to_cmd(&mut cmd);
-            match cmd.spawn() {
-                Ok(mut child) => {
-                    if is_background {
-                        let pid = child.id();
-                        spawn_background(Arc::clone(&bg_jobs), pid, cmd_str, move || { child.wait().ok(); });
-                    } else {
-                        child.wait().ok();
-                    }
+    for (i, command) in commands.into_iter().enumerate() {
+        let streams = Streams::for_pipeline(&command.redirects, read_ends[i].take(), write_ends[i].take());
+        let Command { name, args, command_type, .. } = command;
+
+        match command_type {
+            CommandKind::External(path) => {
+                let mut cmd = std::process::Command::new(&path);
+                cmd.arg0(&name).args(&args);
+                streams.apply_to_cmd(&mut cmd);
+                match cmd.spawn() {
+                    Ok(child) => children.push(child),
+                    Err(e)    => eprintln!("{}: {}", name, e),
                 }
-                Err(e) => eprintln!("{}: {}", name, e),
             }
-            false
-        }
-        CommandKind::Builtin => {
-            let (mut out, mut err) = streams.into_writers();
-            if is_background {
+            CommandKind::Builtin => {
+                let (mut out, mut err) = streams.into_writers();
                 let executables_clone = Arc::clone(&executables);
-                let bg_for_builtin = Arc::clone(&bg_jobs);
-                spawn_background(Arc::clone(&bg_jobs), 0, cmd_str, move || {
-                    run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_for_builtin);
+                let bg_jobs_clone = Arc::clone(&bg_jobs);
+                let handle = std::thread::spawn(move || {
+                    run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_jobs_clone)
                 });
-                false
-            } else {
-                run_builtin(&name, &args, &mut *out, &mut *err, &executables, &bg_jobs)
+                threads.push(handle);
             }
         }
-        CommandKind::NotFound => unreachable!(),
+    }
+
+    let last_pid = children.last().map(|c| c.id()).unwrap_or(0);
+
+    if is_background {
+        let job_id = bg_jobs.lock().unwrap().register_job(cmd_str);
+        println!("[{}] {}", job_id, last_pid);
+        std::thread::spawn(move || {
+            for mut child in children { child.wait().ok(); }
+            for handle in threads { handle.join().ok(); }
+            bg_jobs.lock().unwrap().mark_done(job_id);
+        });
+        false
+    } else {
+        for mut child in children { child.wait().ok(); }
+        threads.into_iter().any(|h| h.join().unwrap_or(false))
     }
 }

@@ -19,9 +19,9 @@ pub fn run_builtin(
         "type" => {
             for arg in args {
                 match get_command_type(arg, executables) {
-                    CommandKind::Builtin => writeln!(out, "{} is a shell builtin", arg).unwrap(),
-                    CommandKind::External(path) => writeln!(out, "{} is {}", arg, path).unwrap(),
-                    CommandKind::NotFound => writeln!(err, "{}: not found", arg).unwrap(),
+                    Some(CommandKind::Builtin) => writeln!(out, "{} is a shell builtin", arg).unwrap(),
+                    Some(CommandKind::External(path)) => writeln!(out, "{} is {}", arg, path).unwrap(),
+                    None => writeln!(err, "{}: not found", arg).unwrap(),
                 }
             }
         }

@@ -4,7 +4,6 @@ use std::io::{self, Write};
 pub enum CommandKind {
     Builtin,
     External(String),
-    NotFound,
 }
 
 #[derive(PartialEq)]
@@ -24,7 +23,6 @@ pub struct Command {
     pub args: Vec<String>,
     pub redirects: Vec<Redirect>,
     pub command_type: CommandKind,
-    pub is_background: bool,
 }
 
 fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
@@ -43,14 +41,16 @@ fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
 }
 
 pub struct Streams {
-    stdout: Option<std::fs::File>,
-    stderr: Option<std::fs::File>,
+    pub stdin: Option<std::fs::File>,
+    pub stdout: Option<std::fs::File>,
+    pub stderr: Option<std::fs::File>,
 }
 
 impl Streams {
-    pub fn from_redirects(redirects: &[Redirect]) -> Self {
+    pub fn for_pipeline(redirects: &[Redirect], stdin: Option<std::fs::File>, pipe_stdout: Option<std::fs::File>) -> Self {
         Self {
-            stdout: resolve_fd(redirects, Fd::Stdout),
+            stdin,
+            stdout: resolve_fd(redirects, Fd::Stdout).or(pipe_stdout),
             stderr: resolve_fd(redirects, Fd::Stderr),
         }
     }
@@ -62,6 +62,7 @@ impl Streams {
     }
 
     pub fn apply_to_cmd(self, cmd: &mut std::process::Command) {
+        if let Some(f) = self.stdin  { cmd.stdin(std::process::Stdio::from(f)); }
         if let Some(f) = self.stdout { cmd.stdout(std::process::Stdio::from(f)); }
         if let Some(f) = self.stderr { cmd.stderr(std::process::Stdio::from(f)); }
     }
