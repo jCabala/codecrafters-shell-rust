@@ -147,23 +147,30 @@ impl HistoryBuiltin {
 }
 
 enum DeclareBuiltin {
+    Set { name: String, value: String },
     Print(Vec<String>),
     UnknownFlag(String),
 }
 impl DeclareBuiltin {
     fn parse(args: &[String]) -> Self {
         match args.first().map(|s| s.as_str()) {
-            Some("-p") => Self::Print(args[1..].to_vec()),
-            Some(flag) => Self::UnknownFlag(flag.to_string()),
-            None       => Self::Print(vec![]),
+            Some("-p")                          => Self::Print(args[1..].to_vec()),
+            Some(flag) if flag.starts_with('-') => Self::UnknownFlag(flag.to_string()),
+            Some(assignment) => match assignment.split_once('=') {
+                Some((name, value)) => Self::Set { name: name.to_string(), value: value.to_string() },
+                None                => Self::UnknownFlag(assignment.to_string()),
+            },
+            None => Self::Print(vec![]),
         }
     }
     fn run(self, ctx: &mut BuiltinContext) -> bool {
         match self {
+            Self::Set { name, value } =>
+                ctx.variables.lock().unwrap().set(name, value),
             Self::Print(names) => {
                 for name in &names {
                     match ctx.variables.lock().unwrap().get(name) {
-                        Some(val) => writeln!(ctx.out, "declare -- {}={}", name, val).unwrap(),
+                        Some(val) => writeln!(ctx.out, "declare -- {}=\"{}\"", name, val).unwrap(),
                         None      => writeln!(ctx.err, "bash: declare: {}: not found", name).unwrap(),
                     }
                 }
