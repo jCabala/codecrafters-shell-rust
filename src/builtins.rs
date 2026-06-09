@@ -146,8 +146,18 @@ impl HistoryBuiltin {
     }
 }
 
+fn is_valid_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {},
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 enum DeclareBuiltin {
     Set { name: String, value: String },
+    InvalidIdentifier(String),
     Print(Vec<String>),
     UnknownFlag(String),
 }
@@ -157,8 +167,10 @@ impl DeclareBuiltin {
             Some("-p")                          => Self::Print(args[1..].to_vec()),
             Some(flag) if flag.starts_with('-') => Self::UnknownFlag(flag.to_string()),
             Some(assignment) => match assignment.split_once('=') {
-                Some((name, value)) => Self::Set { name: name.to_string(), value: value.to_string() },
-                None                => Self::UnknownFlag(assignment.to_string()),
+                Some((name, value)) if is_valid_identifier(name) =>
+                    Self::Set { name: name.to_string(), value: value.to_string() },
+                Some(_) => Self::InvalidIdentifier(assignment.to_string()),
+                None    => Self::UnknownFlag(assignment.to_string()),
             },
             None => Self::Print(vec![]),
         }
@@ -167,6 +179,8 @@ impl DeclareBuiltin {
         match self {
             Self::Set { name, value } =>
                 ctx.variables.lock().unwrap().set(name, value),
+            Self::InvalidIdentifier(assignment) =>
+                writeln!(ctx.err, "declare: `{}': not a valid identifier", assignment).unwrap(),
             Self::Print(names) => {
                 for name in &names {
                     match ctx.variables.lock().unwrap().get(name) {
