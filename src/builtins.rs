@@ -64,6 +64,13 @@ pub fn run_builtin(
                         writeln!(err, "history: {}: {}", path, e).unwrap();
                     }
                 }
+            } else if args.first().map(|a| a == "-a").unwrap_or(false) {
+                match args.get(1) {
+                    None => writeln!(err, "history: -a: missing filename").unwrap(),
+                    Some(path) => if let Err(e) = history.lock().unwrap().append_to_file(path) {
+                        writeln!(err, "history: {}: {}", path, e).unwrap();
+                    }
+                }
             } else {
                 let limit = args.first().and_then(|a| a.parse::<usize>().ok());
                 history.lock().unwrap().write_to(out, limit).unwrap();

@@ -2,11 +2,12 @@ use std::io::{self, Write};
 
 pub struct History {
     entries: Vec<String>,
+    last_appended: usize,
 }
 
 impl History {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self { entries: Vec::new(), last_appended: 0 }
     }
 
     pub fn push(&mut self, entry: String) {
@@ -18,6 +19,15 @@ impl History {
         for entry in &self.entries {
             writeln!(file, "{}", entry)?;
         }
+        Ok(())
+    }
+
+    pub fn append_to_file(&mut self, path: &str) -> io::Result<()> {
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        for entry in &self.entries[self.last_appended..] {
+            writeln!(file, "{}", entry)?;
+        }
+        self.last_appended = self.entries.len();
         Ok(())
     }
 
