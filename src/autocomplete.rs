@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use rustyline::{Helper, Hinter, Highlighter, Validator, Context};
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
-use crate::command_parser::builtin_commands;
+use crate::builtins::builtin_commands;
 use crate::executables::ExecutableMap;
 
 #[derive(Helper, Hinter, Highlighter, Validator)]

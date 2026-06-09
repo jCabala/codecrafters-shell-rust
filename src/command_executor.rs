@@ -8,6 +8,7 @@ use crate::builtins::run_builtin;
 use crate::command::{Command, CommandKind, Streams};
 use crate::command_parser::Pipeline;
 use crate::history::History;
+use crate::variables::Variables;
 
 
 pub fn execute_pipeline(
@@ -15,6 +16,7 @@ pub fn execute_pipeline(
     executables: Arc<ExecutableMap>,
     bg_jobs: Arc<Mutex<BackgroundJobRegistry>>,
     history: Arc<Mutex<History>>,
+    variables: Arc<Mutex<Variables>>,
 ) -> bool {
     let Pipeline { commands, is_background } = pipeline;
     let n = commands.len();
@@ -58,8 +60,9 @@ pub fn execute_pipeline(
                 let executables_clone = Arc::clone(&executables);
                 let bg_jobs_clone = Arc::clone(&bg_jobs);
                 let history_clone = Arc::clone(&history);
+                let variables_clone = Arc::clone(&variables);
                 let handle = std::thread::spawn(move || {
-                    run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_jobs_clone, &history_clone)
+                    run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_jobs_clone, &history_clone, &variables_clone)
                 });
                 threads.push(handle);
             }

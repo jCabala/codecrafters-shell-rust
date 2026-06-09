@@ -10,6 +10,7 @@ mod command_executor;
 mod command_parser;
 mod executables;
 mod history;
+mod variables;
 
 use autocomplete::Autocomplete;
 use bg_jobs::BackgroundJobRegistry;
@@ -17,11 +18,13 @@ use command_executor::execute_pipeline;
 use executables::build_executables;
 use command_parser::parse_pipeline;
 use history::History;
+use variables::Variables;
 
 fn main() {
     let executables = Arc::new(build_executables());
     let bg_jobs = Arc::new(Mutex::new(BackgroundJobRegistry::new()));
     let history = Arc::new(Mutex::new(History::new()));
+    let variables = Arc::new(Mutex::new(Variables::new()));
 
     if let Ok(path) = std::env::var("HISTFILE") {
         let mut h = history.lock().unwrap();
@@ -46,7 +49,7 @@ fn main() {
         history.lock().unwrap().push(input.clone());
 
         let Some(pipeline) = parse_pipeline(&input, &executables) else { continue };
-        if execute_pipeline(pipeline, Arc::clone(&executables), Arc::clone(&bg_jobs), Arc::clone(&history)) {
+        if execute_pipeline(pipeline, Arc::clone(&executables), Arc::clone(&bg_jobs), Arc::clone(&history), Arc::clone(&variables)) {
             break;
         }
     }

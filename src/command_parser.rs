@@ -1,12 +1,9 @@
+use crate::builtins::is_builtin_command;
 use crate::command::{Command, CommandKind, Fd, Redirect, WriteMode};
 use crate::executables::ExecutableMap;
 
-pub fn builtin_commands() -> Vec<&'static str> {
-    vec!["exit", "echo", "type", "pwd", "cd", "jobs", "history", "declare"]
-}
-
 pub fn get_command_type(command: &str, executables: &ExecutableMap) -> Option<CommandKind> {
-    if builtin_commands().contains(&command) {
+    if is_builtin_command(command) {
         Some(CommandKind::Builtin)
     } else if let Some(path) = executables.get(command) {
         Some(CommandKind::External(path.clone()))
