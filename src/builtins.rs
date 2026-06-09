@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use crate::bg_jobs::BackgroundJobRegistry;
+use crate::completions::CompletionRegistry;
 use crate::executables::ExecutableMap;
 use crate::history::History;
 use crate::variables::Variables;
@@ -8,7 +9,7 @@ use crate::variables::Variables;
 // ── Builtin registry ───────────────────────────────────────────────────────────
 
 pub fn builtin_commands() -> Vec<&'static str> {
-    vec!["exit", "echo", "type", "pwd", "cd", "jobs", "history", "declare"]
+    vec!["exit", "echo", "type", "pwd", "cd", "jobs", "history", "declare", "complete"]
 }
 
 pub fn is_builtin_command(name: &str) -> bool {
@@ -24,6 +25,7 @@ pub struct BuiltinContext<'a> {
     pub bg_jobs:     &'a Arc<Mutex<BackgroundJobRegistry>>,
     pub history:     &'a Arc<Mutex<History>>,
     pub variables:   &'a Arc<Mutex<Variables>>,
+    pub completions: &'a Arc<Mutex<CompletionRegistry>>,
 }
 
 // ── Builtin structs ────────────────────────────────────────────────────────────
@@ -196,6 +198,33 @@ impl DeclareBuiltin {
     }
 }
 
+enum CompleteBuiltin {
+    Register { script: String, command: String },
+    InvalidUsage,
+}
+impl CompleteBuiltin {
+    fn parse(args: &[String]) -> Self {
+        if args.get(0).map(|s| s.as_str()) == Some("-C") {
+            match (args.get(1), args.get(2)) {
+                (Some(script), Some(command)) =>
+                    Self::Register { script: script.clone(), command: command.clone() },
+                _ => Self::InvalidUsage,
+            }
+        } else {
+            Self::InvalidUsage
+        }
+    }
+    fn run(self, ctx: &mut BuiltinContext) -> bool {
+        match self {
+            Self::Register { script, command } =>
+                ctx.completions.lock().unwrap().register(command, script),
+            Self::InvalidUsage =>
+                writeln!(ctx.err, "complete: usage: complete -C script command").unwrap(),
+        }
+        false
+    }
+}
+
 // ── Dispatch ───────────────────────────────────────────────────────────────────
 
 pub fn run_builtin(
@@ -207,17 +236,19 @@ pub fn run_builtin(
     bg_jobs: &Arc<Mutex<BackgroundJobRegistry>>,
     history: &Arc<Mutex<History>>,
     variables: &Arc<Mutex<Variables>>,
+    completions: &Arc<Mutex<CompletionRegistry>>,
 ) -> bool {
-    let mut ctx = BuiltinContext { out, err, executables, bg_jobs, history, variables };
+    let mut ctx = BuiltinContext { out, err, executables, bg_jobs, history, variables, completions };
     match name {
-        "exit"    => ExitBuiltin::parse(args).run(&mut ctx),
-        "echo"    => EchoBuiltin::parse(args).run(&mut ctx),
-        "type"    => TypeBuiltin::parse(args).run(&mut ctx),
-        "pwd"     => PwdBuiltin::parse(args).run(&mut ctx),
-        "cd"      => CdBuiltin::parse(args).run(&mut ctx),
-        "jobs"    => JobsBuiltin::parse(args).run(&mut ctx),
-        "history" => HistoryBuiltin::parse(args).run(&mut ctx),
-        "declare" => DeclareBuiltin::parse(args).run(&mut ctx),
-        _         => { writeln!(ctx.err, "panic: unknown builtin '{}'", name).unwrap(); false }
+        "exit"     => ExitBuiltin::parse(args).run(&mut ctx),
+        "echo"     => EchoBuiltin::parse(args).run(&mut ctx),
+        "type"     => TypeBuiltin::parse(args).run(&mut ctx),
+        "pwd"      => PwdBuiltin::parse(args).run(&mut ctx),
+        "cd"       => CdBuiltin::parse(args).run(&mut ctx),
+        "jobs"     => JobsBuiltin::parse(args).run(&mut ctx),
+        "history"  => HistoryBuiltin::parse(args).run(&mut ctx),
+        "declare"  => DeclareBuiltin::parse(args).run(&mut ctx),
+        "complete" => CompleteBuiltin::parse(args).run(&mut ctx),
+        _          => { writeln!(ctx.err, "panic: unknown builtin '{}'", name).unwrap(); false }
     }
 }

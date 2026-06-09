@@ -1,3 +1,4 @@
+use crate::completions::CompletionRegistry;
 use crate::executables::ExecutableMap;
 use std::fs::File;
 use std::os::unix::io::FromRawFd;
@@ -17,6 +18,7 @@ pub fn execute_pipeline(
     bg_jobs: Arc<Mutex<BackgroundJobRegistry>>,
     history: Arc<Mutex<History>>,
     variables: Arc<Mutex<Variables>>,
+    completions: Arc<Mutex<CompletionRegistry>>,
 ) -> bool {
     let Pipeline { commands, is_background } = pipeline;
     let n = commands.len();
@@ -61,8 +63,9 @@ pub fn execute_pipeline(
                 let bg_jobs_clone = Arc::clone(&bg_jobs);
                 let history_clone = Arc::clone(&history);
                 let variables_clone = Arc::clone(&variables);
+                let completions_clone = Arc::clone(&completions);
                 let handle = std::thread::spawn(move || {
-                    run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_jobs_clone, &history_clone, &variables_clone)
+                    run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_jobs_clone, &history_clone, &variables_clone, &completions_clone)
                 });
                 threads.push(handle);
             }
