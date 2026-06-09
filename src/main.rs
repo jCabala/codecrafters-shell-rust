@@ -22,6 +22,12 @@ fn main() {
     let executables = Arc::new(build_executables());
     let bg_jobs = Arc::new(Mutex::new(BackgroundJobRegistry::new()));
     let history = Arc::new(Mutex::new(History::new()));
+
+    if let Ok(path) = std::env::var("HISTFILE") {
+        let mut h = history.lock().unwrap();
+        let _ = h.read_from_file(&path);
+        h.mark_all_appended();
+    }
     let config = Config::builder().completion_type(CompletionType::List).build();
     let mut editor: Editor<Autocomplete, DefaultHistory> = Editor::with_config(config).expect("Failed to create line editor");
     editor.set_helper(Some(Autocomplete::new(Arc::clone(&executables))));
@@ -43,5 +49,9 @@ fn main() {
         if execute_pipeline(pipeline, Arc::clone(&executables), Arc::clone(&bg_jobs), Arc::clone(&history)) {
             break;
         }
+    }
+
+    if let Ok(path) = std::env::var("HISTFILE") {
+        let _ = history.lock().unwrap().write_to_file(&path);
     }
 }

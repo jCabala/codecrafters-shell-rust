@@ -22,6 +22,10 @@ impl History {
         Ok(())
     }
 
+    pub fn mark_all_appended(&mut self) {
+        self.last_appended = self.entries.len();
+    }
+
     pub fn append_to_file(&mut self, path: &str) -> io::Result<()> {
         let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
         for entry in &self.entries[self.last_appended..] {
