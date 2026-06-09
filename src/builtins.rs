@@ -50,8 +50,14 @@ pub fn run_builtin(
         }
         "jobs" => bg_jobs.lock().unwrap().list_jobs(out),
         "history" => {
-            for (i, entry) in history.lock().unwrap().entries().iter().enumerate() {
-                writeln!(out, "{:5}  {}", i + 1, entry).unwrap();
+            let locked = history.lock().unwrap();
+            let all = locked.entries();
+            let start = args.get(0)
+                .and_then(|a| a.parse::<usize>().ok())
+                .map(|n| all.len().saturating_sub(n))
+                .unwrap_or(0);
+            for (i, entry) in all[start..].iter().enumerate() {
+                writeln!(out, "{:5}  {}", start + i + 1, entry).unwrap();
             }
         }
         _ => writeln!(err, "panic: unknown builtin command '{}'", name).unwrap(),
