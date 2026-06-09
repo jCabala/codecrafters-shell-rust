@@ -200,24 +200,34 @@ impl DeclareBuiltin {
 
 enum CompleteBuiltin {
     Register { script: String, command: String },
+    PrintSpec(String),
     InvalidUsage,
 }
 impl CompleteBuiltin {
     fn parse(args: &[String]) -> Self {
-        if args.get(0).map(|s| s.as_str()) == Some("-C") {
-            match (args.get(1), args.get(2)) {
+        match args.get(0).map(|s| s.as_str()) {
+            Some("-C") => match (args.get(1), args.get(2)) {
                 (Some(script), Some(command)) =>
                     Self::Register { script: script.clone(), command: command.clone() },
                 _ => Self::InvalidUsage,
-            }
-        } else {
-            Self::InvalidUsage
+            },
+            Some("-p") => match args.get(1) {
+                Some(command) => Self::PrintSpec(command.clone()),
+                None          => Self::InvalidUsage,
+            },
+            _ => Self::InvalidUsage,
         }
     }
     fn run(self, ctx: &mut BuiltinContext) -> bool {
         match self {
             Self::Register { script, command } =>
                 ctx.completions.lock().unwrap().register(command, script),
+            Self::PrintSpec(command) => {
+                match ctx.completions.lock().unwrap().get(&command) {
+                    Some(script) => writeln!(ctx.out, "complete -C '{}' {}", script, command).unwrap(),
+                    None         => writeln!(ctx.err, "complete: {}: no completion specification", command).unwrap(),
+                }
+            }
             Self::InvalidUsage =>
                 writeln!(ctx.err, "complete: usage: complete -C script command").unwrap(),
         }
