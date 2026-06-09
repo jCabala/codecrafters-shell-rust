@@ -1,17 +1,19 @@
 use std::io::Write;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::bg_jobs::BackgroundJobRegistry;
 use crate::command::CommandKind;
 use crate::command_parser::get_command_type;
+use crate::executables::ExecutableMap;
+use crate::history::History;
 
 pub fn run_builtin(
     name: &str,
     args: &[String],
     out: &mut dyn Write,
     err: &mut dyn Write,
-    executables: &HashMap<String, String>,
+    executables: &ExecutableMap,
     bg_jobs: &Arc<Mutex<BackgroundJobRegistry>>,
+    history: &Arc<Mutex<History>>,
 ) -> bool {
     match name {
         "exit" => return true,
@@ -47,6 +49,11 @@ pub fn run_builtin(
             }
         }
         "jobs" => bg_jobs.lock().unwrap().list_jobs(out),
+        "history" => {
+            for (i, entry) in history.lock().unwrap().entries().iter().enumerate() {
+                writeln!(out, "{:5}  {}", i + 1, entry).unwrap();
+            }
+        }
         _ => writeln!(err, "panic: unknown builtin command '{}'", name).unwrap(),
     }
     false

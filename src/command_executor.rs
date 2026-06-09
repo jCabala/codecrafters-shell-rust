@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::executables::ExecutableMap;
 use std::fs::File;
 use std::os::unix::io::FromRawFd;
 use std::sync::{Arc, Mutex};
@@ -7,12 +7,14 @@ use crate::bg_jobs::BackgroundJobRegistry;
 use crate::builtins::run_builtin;
 use crate::command::{Command, CommandKind, Streams};
 use crate::command_parser::Pipeline;
+use crate::history::History;
 
 
 pub fn execute_pipeline(
     pipeline: Pipeline,
-    executables: Arc<HashMap<String, String>>,
+    executables: Arc<ExecutableMap>,
     bg_jobs: Arc<Mutex<BackgroundJobRegistry>>,
+    history: Arc<Mutex<History>>,
 ) -> bool {
     let Pipeline { commands, is_background } = pipeline;
     let n = commands.len();
@@ -55,8 +57,9 @@ pub fn execute_pipeline(
                 let (mut out, mut err) = streams.into_writers();
                 let executables_clone = Arc::clone(&executables);
                 let bg_jobs_clone = Arc::clone(&bg_jobs);
+                let history_clone = Arc::clone(&history);
                 let handle = std::thread::spawn(move || {
-                    run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_jobs_clone)
+                    run_builtin(&name, &args, &mut *out, &mut *err, &executables_clone, &bg_jobs_clone, &history_clone)
                 });
                 threads.push(handle);
             }

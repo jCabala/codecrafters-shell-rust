@@ -1,17 +1,17 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use rustyline::{Helper, Hinter, Highlighter, Validator, Context};
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use crate::command_parser::builtin_commands;
+use crate::executables::ExecutableMap;
 
 #[derive(Helper, Hinter, Highlighter, Validator)]
 pub struct Autocomplete {
-    pub executables: Arc<HashMap<String, String>>,
+    pub executables: Arc<ExecutableMap>,
     file_completer: FilenameCompleter,
 }
 
 impl Autocomplete {
-    pub fn new(executables: Arc<HashMap<String, String>>) -> Self {
+    pub fn new(executables: Arc<ExecutableMap>) -> Self {
         Self { executables, file_completer: FilenameCompleter::new() }
     }
 }

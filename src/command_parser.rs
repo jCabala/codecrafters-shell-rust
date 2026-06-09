@@ -1,28 +1,11 @@
-use std::collections::HashMap;
-use std::os::unix::fs::PermissionsExt;
 use crate::command::{Command, CommandKind, Fd, Redirect, WriteMode};
+use crate::executables::ExecutableMap;
 
 pub fn builtin_commands() -> Vec<&'static str> {
-    vec!["exit", "echo", "type", "pwd", "cd", "jobs"]
+    vec!["exit", "echo", "type", "pwd", "cd", "jobs", "history"]
 }
 
-pub fn build_executables() -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    let paths = std::env::var("PATH").unwrap_or_default();
-    for dir in paths.split(':') {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
-        for entry in entries.flatten() {
-            let Ok(meta) = entry.metadata() else { continue };
-            if meta.permissions().mode() & 0o111 == 0 { continue; }
-            let file_name = entry.file_name();
-            let Some(name) = file_name.to_str() else { continue };
-            map.entry(name.to_string()).or_insert_with(|| format!("{}/{}", dir, name));
-        }
-    }
-    map
-}
-
-pub fn get_command_type(command: &str, executables: &HashMap<String, String>) -> Option<CommandKind> {
+pub fn get_command_type(command: &str, executables: &ExecutableMap) -> Option<CommandKind> {
     if builtin_commands().contains(&command) {
         Some(CommandKind::Builtin)
     } else if let Some(path) = executables.get(command) {
@@ -126,7 +109,7 @@ pub struct Pipeline {
     pub is_background: bool,
 }
 
-pub fn parse_pipeline(input: &str, executables: &HashMap<String, String>) -> Option<Pipeline> {
+pub fn parse_pipeline(input: &str, executables: &ExecutableMap) -> Option<Pipeline> {
     let segments: Vec<&str> = split_pipeline(input)
         .into_iter()
         .map(str::trim)
@@ -172,7 +155,7 @@ pub fn parse_pipeline(input: &str, executables: &HashMap<String, String>) -> Opt
     Some(Pipeline { commands, is_background })
 }
 
-fn parse_command(input: &str, executables: &HashMap<String, String>) -> Option<Command> {
+fn parse_command(input: &str, executables: &ExecutableMap) -> Option<Command> {
     let all_args = parse_args(input);
     let name = all_args.get(0).cloned().unwrap_or_default();
     let command_type = match get_command_type(&name, executables) {
