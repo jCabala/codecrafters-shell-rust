@@ -1,15 +1,15 @@
-use crate::completions::CompletionRegistry;
-use crate::executables::ExecutableMap;
+use crate::shell_state::CompletionRegistry;
+use crate::shell_state::ExecutableMap;
 use std::fs::File;
 use std::os::unix::io::FromRawFd;
 use std::sync::{Arc, Mutex};
 use std::os::unix::process::CommandExt;
-use crate::bg_jobs::BackgroundJobRegistry;
+use crate::shell_state::BackgroundJobRegistry;
 use crate::builtins::run_builtin;
-use crate::command::{Command, CommandKind, Streams};
-use crate::command_parser::Pipeline;
-use crate::history::History;
-use crate::variables::Variables;
+use super::{Command, CommandKind, Streams};
+use super::parser::Pipeline;
+use crate::shell_state::History;
+use crate::shell_state::Variables;
 
 
 pub fn execute_pipeline(
@@ -34,7 +34,8 @@ pub fn execute_pipeline(
     for i in 0..n - 1 {
         let mut fds = [0i32; 2];
          /* O_CLOEXEC: close inherited write ends in child on exec, preventing self-deadlock
-            Why? EOF only when all write ends are closed. If a child inherits a write end and execs an external command, it may never close that write end, causing the parent to wait indefinitely for EOF. */
+            Why? EOF only when all write ends are closed. If a child inherits a write end and execs 
+            an external command, it may never close that write end, causing the parent to wait indefinitely for EOF. */
         unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
         read_ends[i + 1] = Some(unsafe { File::from_raw_fd(fds[0]) });
         write_ends[i]    = Some(unsafe { File::from_raw_fd(fds[1]) });

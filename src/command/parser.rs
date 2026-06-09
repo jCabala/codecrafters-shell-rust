@@ -1,7 +1,7 @@
 use crate::builtins::is_builtin_command;
-use crate::command::{Command, CommandKind, Fd, Redirect, WriteMode};
-use crate::executables::ExecutableMap;
-use crate::variables::Variables;
+use super::{Command, CommandKind, Fd, Redirect, WriteMode};
+use crate::shell_state::ExecutableMap;
+use crate::shell_state::Variables;
 
 pub fn get_command_type(command: &str, executables: &ExecutableMap) -> Option<CommandKind> {
     if is_builtin_command(command) {

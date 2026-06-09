@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 use rustyline::{Helper, Hinter, Highlighter, Validator, Context};
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use crate::builtins::builtin_commands;
-use crate::completions::CompletionRegistry;
-use crate::executables::ExecutableMap;
+use crate::shell_state::CompletionRegistry;
+use crate::shell_state::ExecutableMap;
 
 #[derive(Helper, Hinter, Highlighter, Validator)]
 pub struct Autocomplete {

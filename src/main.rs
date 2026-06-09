@@ -1,67 +1,9 @@
-use std::sync::{Arc, Mutex};
-use rustyline::{Editor, Config, CompletionType, error::ReadlineError};
-use rustyline::history::DefaultHistory;
-
 mod autocomplete;
-mod bg_jobs;
 mod builtins;
 mod command;
-mod command_executor;
-mod command_parser;
-mod completions;
-mod executables;
-mod history;
-mod variables;
-
-use autocomplete::Autocomplete;
-use bg_jobs::BackgroundJobRegistry;
-use command_executor::execute_pipeline;
-use completions::CompletionRegistry;
-use executables::build_executables;
-use command_parser::parse_pipeline;
-use history::History;
-use variables::Variables;
+mod shell;
+mod shell_state;
 
 fn main() {
-    let executables = Arc::new(build_executables());
-    let bg_jobs = Arc::new(Mutex::new(BackgroundJobRegistry::new()));
-    let history = Arc::new(Mutex::new(History::new()));
-    let variables = Arc::new(Mutex::new(Variables::new()));
-    let completions = Arc::new(Mutex::new(CompletionRegistry::new()));
-
-    if let Ok(path) = std::env::var("HISTFILE") {
-        let mut h = history.lock().unwrap();
-        let _ = h.read_from_file(&path);
-        h.mark_all_appended();
-    }
-    let config = Config::builder().completion_type(CompletionType::List).build();
-    let mut editor: Editor<Autocomplete, DefaultHistory> = Editor::with_config(config).expect("Failed to create line editor");
-    editor.set_helper(Some(Autocomplete::new(Arc::clone(&executables), Arc::clone(&completions))));
-
-    loop {
-        for (id, marker, cmd) in bg_jobs.lock().unwrap().drain_completed() {
-            eprintln!("[{}]{}  {:<24}{}", id, marker, "Done", cmd);
-        }
-
-        let input = match editor.readline("$ ") {
-            Ok(line) => { editor.add_history_entry(&line).ok(); line }
-            Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
-            Err(e) => { eprintln!("shell: {}", e); break; }
-        };
-
-        history.lock().unwrap().push(input.clone());
-
-        let pipeline = { 
-            let vars = variables.lock().unwrap();
-            parse_pipeline(&input, &executables, &vars)
-        };
-        let Some(pipeline) = pipeline else { continue };
-        if execute_pipeline(pipeline, Arc::clone(&executables), Arc::clone(&bg_jobs), Arc::clone(&history), Arc::clone(&variables), Arc::clone(&completions)) {
-            break;
-        }
-    }
-
-    if let Ok(path) = std::env::var("HISTFILE") {
-        let _ = history.lock().unwrap().append_to_file(&path);
-    }
+    shell::Shell::new().run();
 }

@@ -8,7 +8,9 @@
       "Bash(printf \"cmd1\\\\ncmd2\\\\n\" > /tmp/test_history.txt && printf \"history -r /tmp/test_history.txt\\\\nhistory\\\\nexit\\\\n\" | cargo run -q 2>/dev/null)",
       "Bash(HISTFILE=/tmp/histfile printf \"echo hello\\\\nhistory\\\\nexit\\\\n\")",
       "Bash(HISTFILE=/tmp/histfile cargo run -q)",
-      "Bash(grep -v \"^\\\\\\\\$\")"
+      "Bash(grep -v \"^\\\\\\\\$\")",
+      "Bash(mkdir /home/jcabala/CodeCrafters/codecrafters-shell-rust/src/shell_state)",
+      "Bash(mv bg_jobs.rs history.rs variables.rs completions.rs shell_state/)"
     ],
     "additionalDirectories": [
       "/tmp"

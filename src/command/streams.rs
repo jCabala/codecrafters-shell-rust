@@ -1,29 +1,5 @@
 use std::io::{self, Write};
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum CommandKind {
-    Builtin,
-    External(String),
-}
-
-#[derive(PartialEq)]
-pub enum Fd { Stdout, Stderr }
-
-#[derive(PartialEq)]
-pub enum WriteMode { Overwrite, Append }
-
-pub struct Redirect {
-    pub fd: Fd,
-    pub mode: WriteMode,
-    pub target: String,
-}
-
-pub struct Command {
-    pub name: String,
-    pub args: Vec<String>,
-    pub redirects: Vec<Redirect>,
-    pub command_type: CommandKind,
-}
+use super::{Fd, Redirect, WriteMode};
 
 fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
     let mut result = None;
@@ -41,7 +17,7 @@ fn resolve_fd(redirects: &[Redirect], fd: Fd) -> Option<std::fs::File> {
 }
 
 pub struct Streams {
-    pub stdin: Option<std::fs::File>,
+    pub stdin:  Option<std::fs::File>,
     pub stdout: Option<std::fs::File>,
     pub stderr: Option<std::fs::File>,
 }
@@ -67,4 +43,3 @@ impl Streams {
         if let Some(f) = self.stderr { cmd.stderr(std::process::Stdio::from(f)); }
     }
 }
-
