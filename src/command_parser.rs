@@ -2,7 +2,7 @@ use crate::command::{Command, CommandKind, Fd, Redirect, WriteMode};
 use crate::executables::ExecutableMap;
 
 pub fn builtin_commands() -> Vec<&'static str> {
-    vec!["exit", "echo", "type", "pwd", "cd", "jobs", "history"]
+    vec!["exit", "echo", "type", "pwd", "cd", "jobs", "history", "declare"]
 }
 
 pub fn get_command_type(command: &str, executables: &ExecutableMap) -> Option<CommandKind> {
