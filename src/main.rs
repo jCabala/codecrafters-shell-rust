@@ -52,6 +52,6 @@ fn main() {
     }
 
     if let Ok(path) = std::env::var("HISTFILE") {
-        let _ = history.lock().unwrap().write_to_file(&path);
+        let _ = history.lock().unwrap().append_to_file(&path);
     }
 }
